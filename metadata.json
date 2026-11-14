@@ -1,0 +1,6 @@
+{
+  "name": "Know Your Product",
+  "description": "Evidence-based product comparison and label analyzer powered by multimodal OCR and official regulatory registries (FDA, USDA, EFSA, WHO/IARC, Codex, FSSAI).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

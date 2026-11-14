@@ -1,0 +1,562 @@
+import {
+  FLAGGED_ADDITIVES_DB,
+  SAFE_COMMON_INGREDIENTS
+} from '../data/regulatoryData';
+import {
+  AllowedAuthorityId,
+  ClaimEvaluation,
+  ComparisonReport,
+  ComparisonVerdict,
+  EvaluatedProduct,
+  GlossaryTerm,
+  IngredientEvaluation,
+  ProductInput,
+  ProductScorecard,
+  RiskTier,
+  SubScoreDetail
+} from '../types/product';
+
+export interface AiIngredientAnnotation {
+  ingredientName: string;
+  riskTier: RiskTier;
+  primaryAuthority: AllowedAuthorityId;
+  registryChecked: string;
+  regulatoryStatusAndLimit: string;
+  isPlasticOrEndocrineConcern: boolean;
+  sideEffectsSummary: string;
+  citationUrl: string;
+  conflictResolutionNote?: string;
+  vulnerableFlags?: ('children' | 'pregnancy' | 'allergies')[];
+}
+
+export function parseCommaOrLineSeparated(raw: string): string[] {
+  if (!raw || !raw.trim()) return [];
+  return raw
+    .split(/[,;\n]+/)
+    .map((item) => item.replace(/\s+/g, ' ').trim())
+    .filter((item) => item.length > 0);
+}
+
+export function evaluateSingleIngredient(
+  ingredientRaw: string,
+  index: number,
+  aiAnnotationsMap: Record<string, AiIngredientAnnotation>
+): IngredientEvaluation {
+  const normalized = ingredientRaw.toLowerCase().trim();
+
+  // 1. Check Flagged Additives & Plastic Concerns DB first (deterministic authority)
+  for (const additive of FLAGGED_ADDITIVES_DB) {
+    const matched = additive.synonyms.some(
+      (syn) =>
+        normalized === syn.toLowerCase() ||
+        normalized.includes(syn.toLowerCase())
+    );
+    if (matched) {
+      return {
+        ingredientName: ingredientRaw,
+        normalizedMatch: additive.name,
+        positionIndex: index + 1,
+        riskTier: additive.riskTier,
+        primaryAuthority: additive.primaryAuthority,
+        registryChecked: additive.registryName,
+        regulatoryStatusAndLimit: additive.regulatoryStatusAndLimit,
+        isPlasticOrEndocrineConcern: additive.isPlasticRelated,
+        sideEffectsSummary: additive.sideEffectsSummary,
+        citationUrl: additive.citationUrl,
+        conflictResolutionNote: additive.conflictNote,
+        contextJournalismNote: additive.contextJournalismNote,
+        vulnerableFlags: additive.vulnerableGroups
+      };
+    }
+  }
+
+  // 2. Check known safe baseline ingredients
+  for (const [safeKey, safeVal] of Object.entries(SAFE_COMMON_INGREDIENTS)) {
+    if (
+      normalized === safeKey.toLowerCase() ||
+      normalized.includes(safeKey.toLowerCase())
+    ) {
+      const isWheatOrNutAllergen =
+        normalized.includes('wheat') ||
+        normalized.includes('almond') ||
+        normalized.includes('soy') ||
+        normalized.includes('milk');
+      return {
+        ingredientName: ingredientRaw,
+        normalizedMatch: safeKey,
+        positionIndex: index + 1,
+        riskTier: 'Low',
+        primaryAuthority: safeVal.authority,
+        registryChecked: safeVal.registry,
+        regulatoryStatusAndLimit: safeVal.status,
+        isPlasticOrEndocrineConcern: false,
+        sideEffectsSummary: safeVal.note,
+        citationUrl: safeVal.url,
+        vulnerableFlags: isWheatOrNutAllergen ? ['allergies'] : []
+      };
+    }
+  }
+
+  // 3. Check AI-verified regulatory lookup if available and valid
+  const aiMatch = aiAnnotationsMap[normalized];
+  if (aiMatch && aiMatch.primaryAuthority && aiMatch.primaryAuthority !== 'None') {
+    return {
+      ingredientName: ingredientRaw,
+      positionIndex: index + 1,
+      riskTier: aiMatch.riskTier,
+      primaryAuthority: aiMatch.primaryAuthority,
+      registryChecked: aiMatch.registryChecked || `${aiMatch.primaryAuthority} Official Registry`,
+      regulatoryStatusAndLimit: aiMatch.regulatoryStatusAndLimit,
+      isPlasticOrEndocrineConcern: Boolean(aiMatch.isPlasticOrEndocrineConcern),
+      sideEffectsSummary: aiMatch.sideEffectsSummary,
+      citationUrl: aiMatch.citationUrl || 'https://www.fda.gov/',
+      conflictResolutionNote: aiMatch.conflictResolutionNote,
+      vulnerableFlags: aiMatch.vulnerableFlags || []
+    };
+  }
+
+  // 4. Strict Citation Rule (T1.5): Say "No authoritative data found" when no allowed source covers it
+  return {
+    ingredientName: ingredientRaw,
+    positionIndex: index + 1,
+    riskTier: 'No authoritative data found',
+    primaryAuthority: 'None',
+    registryChecked: 'Checked FDA, USDA, EFSA, WHO/IARC, Codex, FSSAI',
+    regulatoryStatusAndLimit: 'No authoritative data found in allowed regulatory registries.',
+    isPlasticOrEndocrineConcern: false,
+    sideEffectsSummary:
+      'No specific toxicology monograph or numeric threshold published by the 9 allowed regulatory authorities.',
+    citationUrl: '',
+    vulnerableFlags: []
+  };
+}
+
+export function evaluateClaims(
+  claimsList: string[],
+  ingredientEvaluations: IngredientEvaluation[],
+  glossary: GlossaryTerm[]
+): ClaimEvaluation[] {
+  if (claimsList.length === 0) return [];
+
+  const hasHighOrModSynthetic = ingredientEvaluations.some(
+    (ing) => ing.riskTier === 'High' || ing.riskTier === 'Moderate'
+  );
+  const hasPlasticConcern = ingredientEvaluations.some(
+    (ing) => ing.isPlasticOrEndocrineConcern
+  );
+  const hasSulfates = ingredientEvaluations.some((ing) =>
+    ing.ingredientName.toLowerCase().includes('sulfate')
+  );
+  const hasParabens = ingredientEvaluations.some((ing) =>
+    ing.ingredientName.toLowerCase().includes('paraben')
+  );
+
+  return claimsList.map((rawClaim) => {
+    const lowerClaim = rawClaim.toLowerCase().trim();
+    const matchedGlossary = glossary.find(
+      (g) =>
+        g.term.toLowerCase() === lowerClaim ||
+        g.aliases.some((alias) => lowerClaim.includes(alias.toLowerCase())) ||
+        lowerClaim.includes(g.term.toLowerCase().split('/')[0].trim())
+    );
+
+    if (matchedGlossary) {
+      let status: ClaimEvaluation['status'] =
+        matchedGlossary.verificationRule === 'Verified if Certified'
+          ? 'Requires Certifier Proof'
+          : matchedGlossary.verificationRule === 'Regulated Threshold'
+            ? 'Verified Standard'
+            : 'Misleading / Unregulated';
+
+      let redFlagWarning = matchedGlossary.redFlags[0] || '';
+
+      // Cross-check claim against actual ingredients
+      if (lowerClaim.includes('sulfate') && lowerClaim.includes('free')) {
+        status = hasSulfates ? 'Misleading / Unregulated' : 'Verified Standard';
+        redFlagWarning = hasSulfates
+          ? 'Contradiction: Ingredient list contains a sulfate surfactant despite Sulfate-Free claim.'
+          : 'Confirmed: No alkyl sulfates (SLS/SLES) found on the ingredient declaration.';
+      } else if (lowerClaim.includes('paraben') && lowerClaim.includes('free')) {
+        status = hasParabens ? 'Misleading / Unregulated' : 'Verified Standard';
+        redFlagWarning = hasParabens
+          ? 'Contradiction: Ingredient list contains parabens despite Paraben-Free claim.'
+          : 'Confirmed: No paraben esters detected in the ingredient list.';
+      } else if (
+        (lowerClaim.includes('natural') || lowerClaim.includes('clean')) &&
+        hasHighOrModSynthetic
+      ) {
+        status = 'Misleading / Unregulated';
+        redFlagWarning =
+          'Product uses unregulated "Natural/Clean" marketing while formulating with flagged synthetic additives or preservatives.';
+      } else if (
+        (lowerClaim.includes('eco') || lowerClaim.includes('biodegradable') || lowerClaim.includes('plastic')) &&
+        hasPlasticConcern
+      ) {
+        status = 'Misleading / Unregulated';
+        redFlagWarning =
+          'Environmental claim conflicts with plastic-related polymers or phthalate/endocrine-linked carriers in the formula.';
+      }
+
+      return {
+        claimText: rawClaim,
+        status,
+        matchedTerm: matchedGlossary.term,
+        authorityCited: matchedGlossary.authorityCited,
+        certifyingBody: matchedGlossary.certifyingBody,
+        legalDefinition: matchedGlossary.legalDefinition,
+        redFlagWarning,
+        citationUrl: matchedGlossary.citationUrl
+      };
+    }
+
+    return {
+      claimText: rawClaim,
+      status: 'Misleading / Unregulated',
+      matchedTerm: 'Unlisted Packaging Claim',
+      authorityCited: 'FDA',
+      certifyingBody: 'No statutory certifying body registered in Key Terms Registry',
+      legalDefinition:
+        'This marketing phrase does not correspond to a defined federal or international standard under FDA, USDA, EFSA, or FSSAI.',
+      redFlagWarning:
+        'Unverified marketing claim; evaluate the ordered ingredient list rather than front-of-pack promotional copy.',
+      citationUrl: 'https://www.fda.gov/food/food-labeling-nutrition'
+    };
+  });
+}
+
+function tierFromScore(score: number): 'Low Risk' | 'Moderate Risk' | 'High Risk' {
+  if (score >= 75) return 'Low Risk';
+  if (score >= 50) return 'Moderate Risk';
+  return 'High Risk';
+}
+
+export function calculateScorecard(
+  input: ProductInput,
+  ingredientEvaluations: IngredientEvaluation[],
+  claimEvaluations: ClaimEvaluation[]
+): ProductScorecard {
+  const isPersonalCare = input.category === 'personal_care';
+
+  const highRiskCount = ingredientEvaluations.filter((i) => i.riskTier === 'High').length;
+  const modRiskCount = ingredientEvaluations.filter((i) => i.riskTier === 'Moderate').length;
+  const plasticCount = ingredientEvaluations.filter((i) => i.isPlasticOrEndocrineConcern).length;
+  const unratedCount = ingredientEvaluations.filter(
+    (i) => i.riskTier === 'No authoritative data found'
+  ).length;
+
+  // 1. Ingredient Safety (0-100)
+  // Higher deduction if high/moderate risk ingredient appears in top 5 ingredients (higher concentration)
+  let safetyDeduction = 0;
+  ingredientEvaluations.forEach((ing) => {
+    const topFiveMultiplier = ing.positionIndex <= 5 ? 1.35 : 1.0;
+    if (ing.riskTier === 'High') safetyDeduction += 22 * topFiveMultiplier;
+    else if (ing.riskTier === 'Moderate') safetyDeduction += 11 * topFiveMultiplier;
+    else if (ing.riskTier === 'No authoritative data found') safetyDeduction += 3;
+  });
+  const ingredientSafetyScore = Math.max(0, Math.min(100, Math.round(100 - safetyDeduction)));
+
+  // 2. Additives & Plastic/Endocrine Concerns (0-100)
+  const additiveDeduction = highRiskCount * 24 + modRiskCount * 12 + plasticCount * 15;
+  const additivesScore = Math.max(0, Math.min(100, Math.round(100 - additiveDeduction)));
+
+  // 3. Claim Integrity (0-100)
+  let claimScore = 88;
+  if (claimEvaluations.length > 0) {
+    const misleadingCount = claimEvaluations.filter(
+      (c) => c.status === 'Misleading / Unregulated'
+    ).length;
+    const requiresProofCount = claimEvaluations.filter(
+      (c) => c.status === 'Requires Certifier Proof'
+    ).length;
+    const verifiedCount = claimEvaluations.filter(
+      (c) => c.status === 'Verified Standard'
+    ).length;
+    claimScore = Math.max(
+      0,
+      Math.min(
+        100,
+        Math.round(90 + verifiedCount * 4 - misleadingCount * 24 - requiresProofCount * 8)
+      )
+    );
+  }
+  if (input.unreadableFlags.length > 0) {
+    claimScore = Math.max(0, claimScore - 15);
+  }
+
+  // 4. Processing Level & 5. Nutrition Balance (Food/Supplement ONLY; N/A for Personal Care per T0.1)
+  let processingDetail: SubScoreDetail;
+  let nutritionDetail: SubScoreDetail;
+  let wellbeingIndex = 0;
+
+  if (isPersonalCare) {
+    processingDetail = {
+      score: 'N/A',
+      weightPercent: 0,
+      tier: 'Not Applicable',
+      rationale:
+        'Not Applicable (T0.1 Rule): Food processing classification (NOVA) does not apply to personal care formulations.'
+    };
+    nutritionDetail = {
+      score: 'N/A',
+      weightPercent: 0,
+      tier: 'Not Applicable',
+      rationale:
+        'Not Applicable (T0.1 Rule): Macronutrient and micronutrient dietary balance applies only to ingested food and supplements.'
+    };
+
+    // Personal Care Weights: Ingredient Safety 45%, Additives & Plastics 35%, Claim Integrity 20%
+    wellbeingIndex = Math.round(
+      ingredientSafetyScore * 0.45 + additivesScore * 0.35 + claimScore * 0.2
+    );
+  } else {
+    // Food or Supplement
+    const totalIngredients = ingredientEvaluations.length;
+    const ultraProcessedMarkers = highRiskCount + modRiskCount + (totalIngredients > 12 ? 2 : 0);
+    const processingScore = Math.max(
+      10,
+      Math.min(100, Math.round(96 - ultraProcessedMarkers * 12 - Math.max(0, totalIngredients - 6) * 2))
+    );
+
+    const addedSugars = input.nutrition.addedSugarsGrams ?? 0;
+    const sodium = input.nutrition.sodiumMg ?? 0;
+    const fiber = input.nutrition.fiberGrams ?? 0;
+    const protein = input.nutrition.proteinGrams ?? 0;
+    const satFat = input.nutrition.saturatedFatGrams ?? 0;
+
+    let nutritionScore = 82;
+    nutritionScore -= Math.min(35, addedSugars * 2.2);
+    nutritionScore -= Math.min(25, Math.max(0, sodium - 150) * 0.05);
+    nutritionScore -= Math.min(20, satFat * 2.5);
+    nutritionScore += Math.min(12, fiber * 2.5);
+    nutritionScore += Math.min(10, protein * 1.2);
+
+    // Check if "No Micronutrients" claim is present
+    if (input.claimsRaw.toLowerCase().includes('no micronutrient')) {
+      nutritionScore -= 20;
+    }
+    nutritionScore = Math.max(10, Math.min(100, Math.round(nutritionScore)));
+
+    processingDetail = {
+      score: processingScore,
+      weightPercent: 15,
+      tier: tierFromScore(processingScore),
+      rationale: `${totalIngredients} declared ingredients with ${highRiskCount + modRiskCount} industrial additive/processing markers.`
+    };
+    nutritionDetail = {
+      score: nutritionScore,
+      weightPercent: 15,
+      tier: tierFromScore(nutritionScore),
+      rationale: `Evaluated per serving (${input.nutrition.servingSize || 'standard serving'}): ${addedSugars}g added sugar, ${sodium}mg sodium, ${protein}g protein, ${fiber}g fiber.`
+    };
+
+    // Food/Supplement Weights: Safety 30%, Additives 25%, Processing 15%, Nutrition 15%, Claims 15%
+    wellbeingIndex = Math.round(
+      ingredientSafetyScore * 0.3 +
+        additivesScore * 0.25 +
+        processingScore * 0.15 +
+        nutritionScore * 0.15 +
+        claimScore * 0.15
+    );
+  }
+
+  const priceNum = parseFloat(input.price);
+  const qtyNum = parseFloat(input.quantity);
+  const hasValidPriceAndQty =
+    !Number.isNaN(priceNum) && priceNum > 0 && !Number.isNaN(qtyNum) && qtyNum > 0;
+
+  // T4.4 Formula: Quality ROI = Wellbeing Index / price / quantity x 100
+  const qualityRoi = hasValidPriceAndQty
+    ? Number(((wellbeingIndex / priceNum / qtyNum) * 100).toFixed(2))
+    : null;
+
+  const unitPrice = hasValidPriceAndQty ? Number((priceNum / qtyNum).toFixed(2)) : 0;
+
+  const wellbeingTier: ProductScorecard['wellbeingTier'] =
+    wellbeingIndex >= 75
+      ? 'High Wellbeing (75–100)'
+      : wellbeingIndex >= 50
+        ? 'Moderate Wellbeing (50–74)'
+        : 'Low Wellbeing (0–49)';
+
+  return {
+    wellbeingIndex,
+    wellbeingTier,
+    efficacyAndSafetyAnchor:
+      highRiskCount === 0 && modRiskCount <= 1
+        ? 'Delivers intended functional performance with minimal regulatory side-effect flags.'
+        : `Functional efficacy is accompanied by ${highRiskCount} High-Risk and ${modRiskCount} Moderate-Risk ingredient flags requiring trade-off consideration.`,
+    subScores: {
+      ingredientSafety: {
+        score: ingredientSafetyScore,
+        weightPercent: isPersonalCare ? 45 : 30,
+        tier: tierFromScore(ingredientSafetyScore),
+        rationale: `${highRiskCount} High-Risk, ${modRiskCount} Moderate-Risk, and ${unratedCount} unrated ingredients across ${ingredientEvaluations.length} total ingredients.`
+      },
+      processingLevel: processingDetail,
+      additives: {
+        score: additivesScore,
+        weightPercent: isPersonalCare ? 35 : 25,
+        tier: tierFromScore(additivesScore),
+        rationale: `${plasticCount} plastic/endocrine-linked ingredients and ${highRiskCount + modRiskCount} flagged additives or preservatives.`
+      },
+      nutritionBalance: nutritionDetail,
+      claimIntegrity: {
+        score: claimScore,
+        weightPercent: isPersonalCare ? 20 : 15,
+        tier: tierFromScore(claimScore),
+        rationale:
+          claimEvaluations.length > 0
+            ? `Audited ${claimEvaluations.length} packaging claim(s) against the Key Terms Registry.`
+            : 'No front-of-pack promotional claims entered.'
+      }
+    },
+    priceNumeric: !Number.isNaN(priceNum) && priceNum > 0 ? priceNum : 0,
+    quantityNumeric: !Number.isNaN(qtyNum) && qtyNum > 0 ? qtyNum : 0,
+    quantityUnit: input.quantityUnit,
+    unitPrice,
+    qualityRoi,
+    qualityRoiFormulaText: hasValidPriceAndQty
+      ? `${wellbeingIndex} (Wellbeing) ÷ $${priceNum.toFixed(2)} ÷ ${qtyNum} ${input.quantityUnit} × 100 = ${qualityRoi}`
+      : 'Price or quantity omitted (optional) — Quality ROI skipped'
+  };
+}
+
+export function buildComparisonReport(
+  inputA: ProductInput,
+  inputB: ProductInput,
+  glossary: GlossaryTerm[],
+  aiAnnotationsMap: Record<string, AiIngredientAnnotation> = {}
+): ComparisonReport {
+  const evaluateProduct = (input: ProductInput): EvaluatedProduct => {
+    const claimsList = parseCommaOrLineSeparated(input.claimsRaw);
+    const ingredientsList = parseCommaOrLineSeparated(input.ingredientsRaw);
+    const ingredientEvaluations = ingredientsList.map((ing, idx) =>
+      evaluateSingleIngredient(ing, idx, aiAnnotationsMap)
+    );
+    const claimEvaluations = evaluateClaims(claimsList, ingredientEvaluations, glossary);
+    const scorecard = calculateScorecard(input, ingredientEvaluations, claimEvaluations);
+
+    return {
+      input,
+      claimsList,
+      ingredientsList,
+      ingredientEvaluations,
+      claimEvaluations,
+      scorecard
+    };
+  };
+
+  const productA = evaluateProduct(inputA);
+  const productB = evaluateProduct(inputB);
+
+  const scoreDiff = productA.scorecard.wellbeingIndex - productB.scorecard.wellbeingIndex;
+  let betterChoice: 'A' | 'B' | 'Tie' = 'Tie';
+  if (Math.abs(scoreDiff) >= 3) {
+    betterChoice = scoreDiff > 0 ? 'A' : 'B';
+  } else if (
+    productA.scorecard.qualityRoi !== null &&
+    productB.scorecard.qualityRoi !== null &&
+    productA.scorecard.qualityRoi !== productB.scorecard.qualityRoi
+  ) {
+    betterChoice =
+      productA.scorecard.qualityRoi > productB.scorecard.qualityRoi ? 'A' : 'B';
+  }
+
+  const winner = betterChoice === 'B' ? productB : productA;
+  const runnerUp = betterChoice === 'B' ? productA : productB;
+
+  const headlineSummary =
+    betterChoice === 'Tie'
+      ? `${productA.input.name || 'Product A'} and ${productB.input.name || 'Product B'} achieve comparable overall Wellbeing Index scores (${productA.scorecard.wellbeingIndex} vs. ${productB.scorecard.wellbeingIndex}).`
+      : `${winner.input.brand ? `${winner.input.brand} ` : ''}${winner.input.name} is the higher-wellbeing choice (${winner.scorecard.wellbeingIndex}/100 vs. ${runnerUp.scorecard.wellbeingIndex}/100).`;
+
+  const highRiskA = productA.ingredientEvaluations.filter((i) => i.riskTier === 'High');
+  const highRiskB = productB.ingredientEvaluations.filter((i) => i.riskTier === 'High');
+
+  const bothHaveRoi =
+    productA.scorecard.qualityRoi !== null && productB.scorecard.qualityRoi !== null;
+
+  const plainLanguageExplanation =
+    betterChoice === 'Tie'
+      ? bothHaveRoi
+        ? `Both products perform similarly across safety and claim transparency. Compare their unit price ($${productA.scorecard.unitPrice}/${productA.input.quantityUnit} vs. $${productB.scorecard.unitPrice}/${productB.input.quantityUnit}) and check the specific sensitivity callouts below to pick the right fit for your household.`
+        : `Both products perform similarly across safety and claim transparency. Check the specific sensitivity callouts below (or optionally add price and quantity for a Quality ROI tie-breaker) to pick the right fit for your household.`
+      : `${winner.input.name} scores higher because it avoids key high-concern additives found in ${runnerUp.input.name} (${runnerUp.ingredientEvaluations.filter((i) => i.riskTier !== 'Low' && i.riskTier !== 'No authoritative data found').map((i) => i.ingredientName).slice(0, 3).join(', ') || 'fewer flagged ingredients'}) while maintaining stronger alignment between its packaging claims and actual ingredient list.`;
+
+  const keyTradeOffs: string[] = [
+    `${productA.input.name || 'Product A'} carries ${highRiskA.length} High-Risk flag(s) and ${productA.ingredientEvaluations.filter((i) => i.riskTier === 'Moderate').length} Moderate-Risk flag(s), whereas ${productB.input.name || 'Product B'} carries ${highRiskB.length} High-Risk flag(s) and ${productB.ingredientEvaluations.filter((i) => i.riskTier === 'Moderate').length} Moderate-Risk flag(s).`
+  ];
+
+  if (bothHaveRoi) {
+    keyTradeOffs.push(
+      `Price & Quantity Trade-Off: ${productA.input.name || 'Product A'} costs $${productA.scorecard.priceNumeric.toFixed(2)} for ${productA.scorecard.quantityNumeric} ${productA.input.quantityUnit} ($${productA.scorecard.unitPrice}/${productA.input.quantityUnit}), compared to $${productB.scorecard.priceNumeric.toFixed(2)} for ${productB.scorecard.quantityNumeric} ${productB.input.quantityUnit} ($${productB.scorecard.unitPrice}/${productB.input.quantityUnit}) for ${productB.input.name || 'Product B'}.`
+    );
+  } else if (productA.scorecard.priceNumeric > 0 || productB.scorecard.priceNumeric > 0) {
+    const priceDescA =
+      productA.scorecard.priceNumeric > 0
+        ? `$${productA.scorecard.priceNumeric.toFixed(2)}`
+        : 'price omitted';
+    const priceDescB =
+      productB.scorecard.priceNumeric > 0
+        ? `$${productB.scorecard.priceNumeric.toFixed(2)}`
+        : 'price omitted';
+    keyTradeOffs.push(
+      `Price Note: ${productA.input.name || 'Product A'} (${priceDescA}) vs. ${productB.input.name || 'Product B'} (${priceDescB}). Enter both price and quantity on both products to compare Quality ROI.`
+    );
+  }
+
+  if (productA.input.unreadableFlags.length > 0 || productB.input.unreadableFlags.length > 0) {
+    keyTradeOffs.push(
+      'Unreadable Label Notice: At least one product had partially illegible label sections flagged during intake; scores reflect only verified readable text without guessing.'
+    );
+  }
+
+  const roiComparisonSummary = bothHaveRoi
+    ? `${productA.input.name || 'Product A'} achieves a Quality ROI of ${productA.scorecard.qualityRoi} versus ${productB.scorecard.qualityRoi} for ${productB.input.name || 'Product B'}.`
+    : 'Pricing omitted (optional) — verdict is based on the Wellbeing Index (0–100). Add price and quantity anytime to include Quality ROI.';
+
+  // Build precautions for Children, Pregnancy, Allergies
+  const gatherPrecautions = (group: 'children' | 'pregnancy' | 'allergies'): string[] => {
+    const notes: string[] = [];
+    [productA, productB].forEach((prod) => {
+      const flagged = prod.ingredientEvaluations.filter((ing) =>
+        ing.vulnerableFlags.includes(group)
+      );
+      if (flagged.length > 0) {
+        const names = flagged.map((f) => `${f.ingredientName} (${f.primaryAuthority})`).join(', ');
+        notes.push(
+          `${prod.input.name || `Product ${prod.input.slot}`}: Contains ${names} — review official ${flagged[0].primaryAuthority} guidance before frequent household use.`
+        );
+      }
+    });
+    if (notes.length === 0) {
+      notes.push(
+        `No specific ${group}-targeted regulatory flags identified in the declared ingredients of either product.`
+      );
+    }
+    return notes;
+  };
+
+  const verdict: ComparisonVerdict = {
+    betterChoice,
+    headlineSummary,
+    plainLanguageExplanation,
+    keyTradeOffs,
+    roiComparisonSummary,
+    precautions: {
+      children: gatherPrecautions('children'),
+      pregnancy: gatherPrecautions('pregnancy'),
+      allergies: gatherPrecautions('allergies')
+    },
+    medicalDisclaimer:
+      'Informational Label Analysis Only — Not Medical Advice: This report summarizes published regulatory registries (FDA, USDA, EPA, CDC, NIH, EFSA, WHO/IARC, Codex Alimentarius, FSSAI) in plain language for in-store shopping comparison. It does not diagnose, treat, or replace personalized guidance from a qualified physician, pediatrician, obstetrician, or allergist.'
+  };
+
+  return {
+    id: `cmp-${Date.now()}`,
+    generatedAt: new Date().toISOString(),
+    productA,
+    productB,
+    verdict
+  };
+}
