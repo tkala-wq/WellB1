@@ -140,8 +140,8 @@ export function evaluateClaims(
 ): ClaimEvaluation[] {
   if (claimsList.length === 0) return [];
 
-  const hasHighOrModSynthetic = ingredientEvaluations.some(
-    (ing) => ing.riskTier === 'High' || ing.riskTier === 'Moderate'
+  const hasHighRiskSynthetic = ingredientEvaluations.some(
+    (ing) => ing.riskTier === 'High'
   );
   const hasPlasticConcern = ingredientEvaluations.some(
     (ing) => ing.isPlasticOrEndocrineConcern
@@ -163,40 +163,45 @@ export function evaluateClaims(
     );
 
     if (matchedGlossary) {
+      // Default to Unverified unless it meets a regulated threshold or is proven misleading by the ingredient list
       let status: ClaimEvaluation['status'] =
-        matchedGlossary.verificationRule === 'Verified if Certified'
-          ? 'Requires Certifier Proof'
-          : matchedGlossary.verificationRule === 'Regulated Threshold'
-            ? 'Verified Standard'
-            : 'Misleading / Unregulated';
+        matchedGlossary.verificationRule === 'Regulated Threshold'
+          ? 'Verified Standard'
+          : 'Unverified';
 
       let redFlagWarning = matchedGlossary.redFlags[0] || '';
 
-      // Cross-check claim against actual ingredients
+      // Cross-check claim against actual ingredients — only mark Misleading / Unregulated when known to be misleading
       if (lowerClaim.includes('sulfate') && lowerClaim.includes('free')) {
         status = hasSulfates ? 'Misleading / Unregulated' : 'Verified Standard';
         redFlagWarning = hasSulfates
-          ? 'Contradiction: Ingredient list contains a sulfate surfactant despite Sulfate-Free claim.'
+          ? 'Known Misleading Contradiction: Ingredient list contains a sulfate surfactant despite Sulfate-Free claim.'
           : 'Confirmed: No alkyl sulfates (SLS/SLES) found on the ingredient declaration.';
       } else if (lowerClaim.includes('paraben') && lowerClaim.includes('free')) {
         status = hasParabens ? 'Misleading / Unregulated' : 'Verified Standard';
         redFlagWarning = hasParabens
-          ? 'Contradiction: Ingredient list contains parabens despite Paraben-Free claim.'
+          ? 'Known Misleading Contradiction: Ingredient list contains parabens despite Paraben-Free claim.'
           : 'Confirmed: No paraben esters detected in the ingredient list.';
       } else if (
-        (lowerClaim.includes('natural') || lowerClaim.includes('clean')) &&
-        hasHighOrModSynthetic
+        (lowerClaim.includes('100% natural') ||
+          lowerClaim.includes('all natural') ||
+          lowerClaim.includes('all-natural') ||
+          lowerClaim.includes('clean')) &&
+        hasHighRiskSynthetic
       ) {
         status = 'Misleading / Unregulated';
         redFlagWarning =
-          'Product uses unregulated "Natural/Clean" marketing while formulating with flagged synthetic additives or preservatives.';
+          'Known Misleading Contradiction: Product claims "All-Natural / Clean" while formulating with High-Risk synthetic additives or preservatives.';
       } else if (
-        (lowerClaim.includes('eco') || lowerClaim.includes('biodegradable') || lowerClaim.includes('plastic')) &&
+        (lowerClaim.includes('eco') ||
+          lowerClaim.includes('biodegradable') ||
+          lowerClaim.includes('plastic-free') ||
+          lowerClaim.includes('plastic free')) &&
         hasPlasticConcern
       ) {
         status = 'Misleading / Unregulated';
         redFlagWarning =
-          'Environmental claim conflicts with plastic-related polymers or phthalate/endocrine-linked carriers in the formula.';
+          'Known Misleading Contradiction: Environmental/plastic-free claim conflicts with plastic-related polymers or phthalate/endocrine-linked carriers in the formula.';
       }
 
       return {
@@ -213,14 +218,14 @@ export function evaluateClaims(
 
     return {
       claimText: rawClaim,
-      status: 'Misleading / Unregulated',
+      status: 'Unverified',
       matchedTerm: 'Unlisted Packaging Claim',
       authorityCited: 'FDA',
       certifyingBody: 'No statutory certifying body registered in Key Terms Registry',
       legalDefinition:
-        'This marketing phrase does not correspond to a defined federal or international standard under FDA, USDA, EFSA, or FSSAI.',
+        'This packaging phrase does not correspond to a verified federal or international standard in the Key Terms Registry.',
       redFlagWarning:
-        'Unverified marketing claim; evaluate the ordered ingredient list rather than front-of-pack promotional copy.',
+        'Unverified finding — no independent certification or regulatory threshold was confirmed on the label.',
       citationUrl: 'https://www.fda.gov/food/food-labeling-nutrition'
     };
   });
@@ -273,8 +278,8 @@ export function calculateScorecard(
     const misleadingCount = claimEvaluations.filter(
       (c) => c.status === 'Misleading / Unregulated'
     ).length;
-    const requiresProofCount = claimEvaluations.filter(
-      (c) => c.status === 'Requires Certifier Proof'
+    const unverifiedCount = claimEvaluations.filter(
+      (c) => c.status === 'Unverified'
     ).length;
     const verifiedCount = claimEvaluations.filter(
       (c) => c.status === 'Verified Standard'
@@ -283,7 +288,7 @@ export function calculateScorecard(
       0,
       Math.min(
         100,
-        Math.round(90 + verifiedCount * 4 - misleadingCount * 24 - requiresProofCount * 8)
+        Math.round(90 + verifiedCount * 4 - misleadingCount * 24 - unverifiedCount * 8)
       )
     );
   }

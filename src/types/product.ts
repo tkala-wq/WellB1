@@ -114,7 +114,7 @@ export interface IngredientEvaluation {
 
 export interface ClaimEvaluation {
   claimText: string;
-  status: 'Verified Standard' | 'Requires Certifier Proof' | 'Misleading / Unregulated';
+  status: 'Verified Standard' | 'Unverified' | 'Misleading / Unregulated';
   matchedTerm?: string;
   authorityCited: AllowedAuthorityId;
   certifyingBody: string;

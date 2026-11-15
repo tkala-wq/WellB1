@@ -6,6 +6,7 @@ import {
   FileWarning,
   Link2,
   Loader2,
+  ScanBarcode,
   SlidersHorizontal,
   Sparkles,
   Trash2,
@@ -26,9 +27,9 @@ export const ProductInputCard: React.FC<ProductInputCardProps> = ({
   onClearSlot
 }) => {
   const [isExtracting, setIsExtracting] = useState(false);
-  const [isCompressing, setIsCompressing] = useState<'front' | 'back' | null>(
-    null
-  );
+  const [isCompressing, setIsCompressing] = useState<
+    'front' | 'back' | 'barcode' | null
+  >(null);
   const [extractError, setExtractError] = useState<string | null>(null);
   const [extractSuccess, setExtractSuccess] = useState<string | null>(null);
   const [customUnreadableNote, setCustomUnreadableNote] = useState('');
@@ -37,6 +38,8 @@ export const ProductInputCard: React.FC<ProductInputCardProps> = ({
   const frontCameraRef = useRef<HTMLInputElement | null>(null);
   const backInputRef = useRef<HTMLInputElement | null>(null);
   const backCameraRef = useRef<HTMLInputElement | null>(null);
+  const barcodeCameraRef = useRef<HTMLInputElement | null>(null);
+  const barcodeInputRef = useRef<HTMLInputElement | null>(null);
 
   const updateField = <K extends keyof ProductInput>(
     key: K,
@@ -48,47 +51,36 @@ export const ProductInputCard: React.FC<ProductInputCardProps> = ({
     });
   };
 
-  const handlePhotoUpload = async (
-    side: 'front' | 'back',
-    e: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setIsCompressing(side);
+  const detectNativeBarcodeDigits = async (file: File): Promise<string> => {
     try {
-      const compressed = await compressLabelImage(file, 1600, 0.84);
-      const labelTitle = `${file.name} (${compressed.sizeKb} KB optimized)`;
-      if (side === 'front') {
-        onChange({
-          ...product,
-          frontPhotoBase64: compressed.dataUrl,
-          frontPhotoName: labelTitle
-        });
-      } else {
-        onChange({
-          ...product,
-          backPhotoBase64: compressed.dataUrl,
-          backPhotoName: labelTitle
-        });
+      const win = window as unknown as {
+        BarcodeDetector?: new (opts?: { formats: string[] }) => {
+          detect: (source: ImageBitmap) => Promise<Array<{ rawValue?: string }>>;
+        };
+      };
+      if (!win.BarcodeDetector || typeof createImageBitmap !== 'function') {
+        return '';
       }
-      setExtractError(null);
+      const detector = new win.BarcodeDetector({
+        formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128']
+      });
+      const bitmap = await createImageBitmap(file);
+      const matches = await detector.detect(bitmap);
+      return matches[0]?.rawValue?.trim() || '';
     } catch {
-      setExtractError('Could not process the selected photo. Please try again.');
-    } finally {
-      setIsCompressing(null);
-      e.target.value = '';
+      return '';
     }
   };
 
-  const handleExtractWithGemini = async () => {
+  const runExtractionRequest = async (overrideInput?: ProductInput) => {
+    const target = overrideInput || product;
     if (
-      !product.frontPhotoBase64 &&
-      !product.backPhotoBase64 &&
-      !product.weblinkOrBarcode.trim()
+      !target.frontPhotoBase64 &&
+      !target.backPhotoBase64 &&
+      !target.weblinkOrBarcode.trim()
     ) {
       setExtractError(
-        'Upload at least one label photo or enter a product URL / barcode before running extraction.'
+        'Upload at least one barcode/label photo or enter a product URL / barcode before running extraction.'
       );
       return;
     }
@@ -102,10 +94,10 @@ export const ProductInputCard: React.FC<ProductInputCardProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          frontPhotoBase64: product.frontPhotoBase64,
-          backPhotoBase64: product.backPhotoBase64,
-          weblinkOrBarcode: product.weblinkOrBarcode,
-          categoryHint: product.category
+          frontPhotoBase64: target.frontPhotoBase64,
+          backPhotoBase64: target.backPhotoBase64,
+          weblinkOrBarcode: target.weblinkOrBarcode,
+          categoryHint: target.category
         })
       });
 
@@ -119,57 +111,94 @@ export const ProductInputCard: React.FC<ProductInputCardProps> = ({
         data.detectedCategory === 'supplement' ||
         data.detectedCategory === 'food'
           ? data.detectedCategory
-          : product.category;
+          : target.category;
+
+      const resolvedBarcode =
+        typeof data.detectedBarcode === 'string' && data.detectedBarcode.trim()
+          ? data.detectedBarcode.trim()
+          : target.weblinkOrBarcode;
+
+      const validUnits: Array<ProductInput['quantityUnit']> = [
+        'fl oz',
+        'oz',
+        'ml',
+        'g',
+        'lb',
+        'servings',
+        'count'
+      ];
+      const resolvedUnit: ProductInput['quantityUnit'] = validUnits.includes(
+        data.quantityUnit
+      )
+        ? data.quantityUnit
+        : target.quantityUnit;
 
       onChange({
-        ...product,
-        brand: data.brand || product.brand,
-        name: data.productName || product.name,
+        ...target,
+        weblinkOrBarcode: resolvedBarcode,
+        brand: data.brand || target.brand,
+        name: data.productName || target.name,
         category: detectedCategory,
+        price:
+          !target.price && typeof data.price === 'number' && data.price > 0
+            ? String(data.price)
+            : target.price,
+        quantity:
+          !target.quantity &&
+          typeof data.quantity === 'number' &&
+          data.quantity > 0
+            ? String(data.quantity)
+            : target.quantity,
+        quantityUnit: resolvedUnit,
         claimsRaw:
           Array.isArray(data.claims) && data.claims.length > 0
             ? data.claims.join(', ')
-            : product.claimsRaw,
+            : target.claimsRaw,
         ingredientsRaw:
           Array.isArray(data.ingredients) && data.ingredients.length > 0
             ? data.ingredients.join(', ')
-            : product.ingredientsRaw,
+            : target.ingredientsRaw,
         nutrition: {
-          servingSize: data.servingSize || product.nutrition.servingSize,
+          servingSize: data.servingSize || target.nutrition.servingSize,
           calories:
             typeof data.calories === 'number'
               ? data.calories
-              : product.nutrition.calories,
+              : target.nutrition.calories,
           addedSugarsGrams:
             typeof data.addedSugarsGrams === 'number'
               ? data.addedSugarsGrams
-              : product.nutrition.addedSugarsGrams,
+              : target.nutrition.addedSugarsGrams,
           sodiumMg:
             typeof data.sodiumMg === 'number'
               ? data.sodiumMg
-              : product.nutrition.sodiumMg,
+              : target.nutrition.sodiumMg,
           fiberGrams:
             typeof data.fiberGrams === 'number'
               ? data.fiberGrams
-              : product.nutrition.fiberGrams,
+              : target.nutrition.fiberGrams,
           proteinGrams:
             typeof data.proteinGrams === 'number'
               ? data.proteinGrams
-              : product.nutrition.proteinGrams,
+              : target.nutrition.proteinGrams,
           saturatedFatGrams:
             typeof data.saturatedFatGrams === 'number'
               ? data.saturatedFatGrams
-              : product.nutrition.saturatedFatGrams
+              : target.nutrition.saturatedFatGrams
         },
         unreadableFlags: Array.isArray(data.unreadableFlags)
           ? data.unreadableFlags
-          : product.unreadableFlags
+          : target.unreadableFlags
       });
+
+      const barcodeNote =
+        typeof data.detectedBarcode === 'string' && data.detectedBarcode.trim()
+          ? ` (Barcode ${data.detectedBarcode.trim()} identified)`
+          : '';
 
       setExtractSuccess(
         Array.isArray(data.unreadableFlags) && data.unreadableFlags.length > 0
-          ? 'Label extracted with unreadable section warnings — please review flagged areas below.'
-          : 'Label fields extracted from input. Verify price and quantity below.'
+          ? `Product details extracted${barcodeNote} — review any notes below.`
+          : `Product details & ingredients extracted${barcodeNote}.`
       );
     } catch (err: unknown) {
       setExtractError(
@@ -180,6 +209,61 @@ export const ProductInputCard: React.FC<ProductInputCardProps> = ({
     } finally {
       setIsExtracting(false);
     }
+  };
+
+  const handlePhotoUpload = async (
+    side: 'front' | 'back' | 'barcode',
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsCompressing(side);
+    try {
+      const [compressed, detectedDigits] = await Promise.all([
+        compressLabelImage(file, 1600, 0.84),
+        detectNativeBarcodeDigits(file)
+      ]);
+      const labelTitle = `${file.name} (${compressed.sizeKb} KB optimized)`;
+
+      if (side === 'barcode') {
+        const updatedProduct: ProductInput = {
+          ...product,
+          frontPhotoBase64: compressed.dataUrl,
+          frontPhotoName: `Barcode Photo: ${labelTitle}`,
+          weblinkOrBarcode: detectedDigits || product.weblinkOrBarcode
+        };
+        onChange(updatedProduct);
+        setExtractError(null);
+        // Immediately trigger extraction from the single barcode photo
+        await runExtractionRequest(updatedProduct);
+      } else if (side === 'front') {
+        onChange({
+          ...product,
+          frontPhotoBase64: compressed.dataUrl,
+          frontPhotoName: labelTitle,
+          weblinkOrBarcode: detectedDigits || product.weblinkOrBarcode
+        });
+        setExtractError(null);
+      } else {
+        onChange({
+          ...product,
+          backPhotoBase64: compressed.dataUrl,
+          backPhotoName: labelTitle,
+          weblinkOrBarcode: detectedDigits || product.weblinkOrBarcode
+        });
+        setExtractError(null);
+      }
+    } catch {
+      setExtractError('Could not process the selected photo. Please try again.');
+    } finally {
+      setIsCompressing(null);
+      e.target.value = '';
+    }
+  };
+
+  const handleExtractWithGemini = async () => {
+    await runExtractionRequest();
   };
 
   const handleAddUnreadableFlag = () => {
@@ -290,13 +374,66 @@ export const ProductInputCard: React.FC<ProductInputCardProps> = ({
           </div>
         </div>
 
+        {/* 1-Photo Barcode Scan (Auto-Lookup) */}
+        {(showPhotoSection || showLinkSection) && (
+          <div className="p-3.5 bg-teal-50/70 border border-teal-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <input
+              ref={barcodeCameraRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={(e) => handlePhotoUpload('barcode', e)}
+            />
+            <input
+              ref={barcodeInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => handlePhotoUpload('barcode', e)}
+            />
+            <div className="space-y-0.5">
+              <div className="text-xs font-semibold text-teal-950 flex items-center gap-1.5">
+                <ScanBarcode className="w-4 h-4 text-teal-700 shrink-0" />
+                Quick 1-Photo Barcode Scan (UPC / EAN Auto-Lookup)
+              </div>
+              <p className="text-[11px] text-teal-800">
+                Take just 1 photo of the barcode — we read the code and look up
+                the brand, claims &amp; ingredient list online automatically.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                disabled={isCompressing === 'barcode' || isExtracting}
+                onClick={() => barcodeCameraRef.current?.click()}
+                className="min-h-[40px] px-3 py-1.5 text-xs font-semibold text-white bg-teal-800 hover:bg-teal-900 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
+              >
+                <Camera className="w-3.5 h-3.5 shrink-0" />
+                {isCompressing === 'barcode'
+                  ? 'Reading...'
+                  : 'Scan Barcode Photo'}
+              </button>
+              <button
+                type="button"
+                disabled={isCompressing === 'barcode' || isExtracting}
+                onClick={() => barcodeInputRef.current?.click()}
+                className="min-h-[40px] px-2.5 py-1.5 text-xs font-medium text-teal-900 bg-white hover:bg-teal-100 border border-teal-300 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
+              >
+                <Upload className="w-3.5 h-3.5 shrink-0" />
+                Upload
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Photo Upload Dropzones (Front & Back per T6.1) */}
         {showPhotoSection && (
           <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-medium text-slate-700 flex items-center gap-1.5">
                 <Camera className="w-3.5 h-3.5 text-teal-700" />
-                Front & Back Label Photos (Auto-Compressed for Mobile)
+                Or Upload Front / Back Label Photos (Auto-Compressed for Mobile)
               </span>
               <span className="text-xs text-slate-500">
                 No-Guessing Rule Active

@@ -81,6 +81,75 @@ async function fetchWebpageSnapshot(rawUrl: string): Promise<string> {
   }
 }
 
+async function fetchOpenProductFactsByBarcode(rawInput: string): Promise<string> {
+  const digitsMatch = rawInput.match(/\b(\d{8,14})\b/);
+  if (!digitsMatch) return '';
+  const barcode = digitsMatch[1];
+
+  const endpoints = [
+    `https://world.openfoodfacts.org/api/v2/product/${barcode}.json`,
+    `https://world.openbeautyfacts.org/api/v2/product/${barcode}.json`,
+    `https://world.openproductsfacts.org/api/v2/product/${barcode}.json`
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4500);
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'KnowYourProduct/1.0' }
+      });
+      clearTimeout(timeout);
+      if (!res.ok) continue;
+      const data = (await res.json()) as {
+        status?: number;
+        product?: Record<string, unknown>;
+      };
+      if (data && data.status === 1 && data.product) {
+        const p = data.product;
+        const nutriments = (p.nutriments || {}) as Record<string, unknown>;
+        return JSON.stringify(
+          {
+            barcode,
+            brand: p.brands || '',
+            productName: p.product_name || p.product_name_en || '',
+            quantity: p.quantity || '',
+            categories: p.categories || '',
+            labelsAndClaims: p.labels || '',
+            ingredientsText:
+              p.ingredients_text_en || p.ingredients_text || '',
+            servingSize: p.serving_size || '',
+            nutriments: {
+              calories:
+                nutriments['energy-kcal_serving'] ??
+                nutriments['energy-kcal_100g'],
+              sugarsGrams:
+                nutriments.sugars_serving ?? nutriments.sugars_100g,
+              sodiumMg:
+                typeof nutriments.sodium_serving === 'number'
+                  ? Math.round(Number(nutriments.sodium_serving) * 1000)
+                  : undefined,
+              fiberGrams:
+                nutriments.fiber_serving ?? nutriments.fiber_100g,
+              proteinGrams:
+                nutriments.proteins_serving ?? nutriments.proteins_100g,
+              saturatedFatGrams:
+                nutriments['saturated-fat_serving'] ??
+                nutriments['saturated-fat_100g']
+            }
+          },
+          null,
+          2
+        );
+      }
+    } catch {
+      // try next registry
+    }
+  }
+  return '';
+}
+
 function parseJsonFromModelText(rawText: string): Record<string, unknown> {
   const trimmed = rawText.trim();
   try {
@@ -105,7 +174,7 @@ async function startServer() {
 
   app.use(express.json({ limit: '25mb' }));
 
-  // Endpoint 1: Multimodal Label OCR + Live Weblink / Barcode Extraction (Tasks T6.1 - T6.4)
+  // Endpoint 1: Multimodal Label OCR + Single Barcode Photo + Live Weblink Extraction (Tasks T6.1 - T6.4)
   app.post('/api/extract-label', async (req, res) => {
     try {
       const {
@@ -140,30 +209,54 @@ async function startServer() {
       };
 
       if (frontPhotoBase64) {
-        addImagePart(frontPhotoBase64, 'Front Packaging Photo (Brand & Marketing Claims)');
+        addImagePart(
+          frontPhotoBase64,
+          'Packaging / Barcode Photo 1 (Front label, product title, or UPC/EAN barcode)'
+        );
       }
       if (backPhotoBase64) {
         addImagePart(
           backPhotoBase64,
-          'Back Packaging Photo (Ingredient List & Nutrition/Supplement Facts)'
+          'Packaging / Barcode Photo 2 (Back ingredient list, nutrition panel, or UPC/EAN barcode)'
         );
       }
 
       const trimmedLink = (weblinkOrBarcode || '').trim();
       let webpageSnapshot = '';
+      let barcodeRegistryData = '';
       if (trimmedLink) {
-        webpageSnapshot = await fetchWebpageSnapshot(trimmedLink);
+        const [snapshot, barcodeInfo] = await Promise.all([
+          fetchWebpageSnapshot(trimmedLink),
+          fetchOpenProductFactsByBarcode(trimmedLink)
+        ]);
+        webpageSnapshot = snapshot;
+        barcodeRegistryData = barcodeInfo;
       }
 
       const hasWeblinkOrQuery = trimmedLink.length > 0;
+      const isSinglePhotoWithoutBack =
+        (Boolean(frontPhotoBase64) && !backPhotoBase64) ||
+        (!frontPhotoBase64 && Boolean(backPhotoBase64));
 
-      const promptText = `You are a regulatory label & product specification specialist for the "Know Your Product" consumer transparency application.
-Extract the complete product details from the provided packaging photo(s) and/or product weblink, barcode, or product query.
+      const promptText = `You are a regulatory label & barcode specification specialist for the "Know Your Product" consumer transparency application.
+Extract the complete product details from the provided packaging/barcode photo(s) and/or product weblink, barcode, or product query.
+
+SINGLE BARCODE PHOTO & ONLINE LOOKUP CAPABILITY:
+- If the user uploaded a photo of a barcode (UPC / EAN / GTIN) or a single product photo that does not show the full printed ingredient list:
+  1. Read the exact barcode digits (UPC/EAN) and any visible brand/product text from the photo and put the digits into "detectedBarcode".
+  2. Use Google Search grounding to look up that exact barcode number (or brand + product name) on official manufacturer pages, Open Food Facts, Open Beauty Facts, USDA FoodData Central, or major retail listings to retrieve the product's real brand, product name, category, packaging claims, and full declared ingredient list in order.
+  3. Add a transparency note to "unreadableFlags" stating: "Ingredients retrieved online via barcode/product lookup — verify against your physical package in case of recent formula changes."
+  4. STRICT NO-GUESSING RULE (Task T6.4): Never invent or guess ingredients based on generic product type. If the exact product's official ingredient list is neither visible in the photo nor published online for that barcode, leave "ingredients": [] and add a clear warning in "unreadableFlags" explaining that the barcode was read but the full ingredient list was not published online, so a photo of the back ingredient list is required.
 
 ${
   hasWeblinkOrQuery
     ? `USER WEBLINK / BARCODE / PRODUCT QUERY: "${trimmedLink}"
-Use URL Context and Google Search grounding to look up this exact product URL, barcode, or product listing. Retrieve its real brand, product name, category ('food', 'supplement', or 'personal_care'), retail price (in USD if available), package quantity and unit ('fl oz', 'oz', 'ml', 'g', 'lb', 'servings', or 'count'), marketing/packaging claims, full ordered ingredient list (INCI or food ingredient list), and nutrition panel facts per serving.`
+Use URL Context and Google Search grounding to look up this exact product URL, barcode, or product listing.`
+    : ''
+}
+${
+  barcodeRegistryData
+    ? `\nOPEN PRODUCT FACTS BARCODE REGISTRY MATCH:\n${barcodeRegistryData}\n`
     : ''
 }
 ${
@@ -173,12 +266,9 @@ ${
 }
 Category hint: ${categoryHint || 'auto-detect'}
 
-CRITICAL TRANSPARENCY RULES (Task T6.4):
-- Extract the real declared ingredient list in label order, packaging claims, price, quantity, and nutrition metrics when found on the label photo or product webpage/search results.
-- If a label photo is blurry or if a webpage does not disclose the full ingredient list, record a clear note inside "unreadableFlags" explaining what was missing or partially unreadable.
-
 Return ONLY a valid JSON object matching this exact structure:
 {
+  "detectedBarcode": "string (digits if a barcode was read or provided, else empty string)",
   "brand": "string",
   "productName": "string",
   "detectedCategory": "food" | "supplement" | "personal_care",
@@ -199,62 +289,74 @@ Return ONLY a valid JSON object matching this exact structure:
 
       parts.push({ text: promptText });
 
-      // When a weblink/barcode/query is present, enable urlContext + googleSearch grounding tools
+      const useSearchGrounding =
+        hasWeblinkOrQuery || isSinglePhotoWithoutBack || Boolean(frontPhotoBase64) || Boolean(backPhotoBase64);
+
       const response = await ai.models.generateContent({
         model: 'gemini-4-hydrogen',
         contents: { parts },
-        config: hasWeblinkOrQuery
+        config: useSearchGrounding
           ? {
               systemInstruction:
-                'You extract accurate product specifications, full ingredient lists, packaging claims, price, and net weight/quantity from product URLs, barcodes, and label photos. Always output strictly valid JSON.',
+                'You extract accurate product specifications, barcode digits, full ingredient lists, packaging claims, price, and net weight/quantity from barcode photos, label photos, and product URLs. Never fabricate ingredients; if an ingredient list is not visible in the photo and cannot be verified online for that exact barcode, leave ingredients empty and explain in unreadableFlags. Always output strictly valid JSON.',
               tools: [{ urlContext: {} }, { googleSearch: {} }]
             }
           : {
               systemInstruction:
                 'You transcribe product packaging labels accurately without guessing illegible text. Always populate unreadableFlags if any section cannot be read with certainty.',
-              responseMimeType: 'application/json',
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  brand: { type: Type.STRING },
-                  productName: { type: Type.STRING },
-                  detectedCategory: { type: Type.STRING },
-                  price: { type: Type.NUMBER },
-                  quantity: { type: Type.NUMBER },
-                  quantityUnit: { type: Type.STRING },
-                  claims: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING }
-                  },
-                  ingredients: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING }
-                  },
-                  servingSize: { type: Type.STRING },
-                  calories: { type: Type.NUMBER },
-                  addedSugarsGrams: { type: Type.NUMBER },
-                  sodiumMg: { type: Type.NUMBER },
-                  fiberGrams: { type: Type.NUMBER },
-                  proteinGrams: { type: Type.NUMBER },
-                  saturatedFatGrams: { type: Type.NUMBER },
-                  unreadableFlags: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING }
-                  }
-                },
-                required: [
-                  'brand',
-                  'productName',
-                  'detectedCategory',
-                  'claims',
-                  'ingredients',
-                  'unreadableFlags'
-                ]
-              }
+              responseMimeType: 'application/json'
             }
       });
 
       const parsed = parseJsonFromModelText(response.text ?? '{}');
+
+      // If Gemini read a barcode from the photo and we didn't have barcodeRegistryData earlier, check Open Product Facts as a fallback if ingredients or productName are still missing
+      const detectedBarcodeStr =
+        typeof parsed.detectedBarcode === 'string'
+          ? parsed.detectedBarcode.trim()
+          : '';
+      if (
+        detectedBarcodeStr &&
+        !barcodeRegistryData &&
+        (!Array.isArray(parsed.ingredients) || parsed.ingredients.length === 0)
+      ) {
+        const fallbackBarcodeJson =
+          await fetchOpenProductFactsByBarcode(detectedBarcodeStr);
+        if (fallbackBarcodeJson) {
+          try {
+            const fb = JSON.parse(fallbackBarcodeJson) as {
+              brand?: string;
+              productName?: string;
+              ingredientsText?: string;
+              labelsAndClaims?: string;
+            };
+            if (!parsed.brand && fb.brand) parsed.brand = fb.brand;
+            if (!parsed.productName && fb.productName)
+              parsed.productName = fb.productName;
+            if (
+              (!Array.isArray(parsed.ingredients) ||
+                parsed.ingredients.length === 0) &&
+              fb.ingredientsText
+            ) {
+              parsed.ingredients = fb.ingredientsText
+                .split(/,(?![^()]*\))/)
+                .map((s) => s.trim())
+                .filter(Boolean);
+            }
+            if (
+              (!Array.isArray(parsed.claims) || parsed.claims.length === 0) &&
+              fb.labelsAndClaims
+            ) {
+              parsed.claims = fb.labelsAndClaims
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean);
+            }
+          } catch {
+            // ignore fallback parse error
+          }
+        }
+      }
 
       // Extract grounding web links if available
       const groundingChunks =

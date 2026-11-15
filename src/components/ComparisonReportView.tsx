@@ -84,22 +84,22 @@ export const ComparisonReportView: React.FC<ComparisonReportViewProps> = ({
   const renderClaimStatus = (status: ClaimEvaluation['status']) => {
     if (status === 'Verified Standard') {
       return (
-        <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700">
+        <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700">
           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
           Verified Standard
         </span>
       );
     }
-    if (status === 'Requires Certifier Proof') {
+    if (status === 'Unverified') {
       return (
-        <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700">
-          <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-          Requires Certifier Proof
+        <span className="inline-flex items-center gap-1 text-xs font-bold text-yellow-600">
+          <AlertTriangle className="w-3.5 h-3.5 text-yellow-600 shrink-0" />
+          Unverified
         </span>
       );
     }
     return (
-      <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700">
+      <span className="inline-flex items-center gap-1 text-xs font-bold text-red-700">
         <ShieldAlert className="w-3.5 h-3.5 text-red-600 shrink-0" />
         Misleading / Unregulated
       </span>
