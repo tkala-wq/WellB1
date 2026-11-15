@@ -76,8 +76,10 @@ export interface NutritionPanelData {
   saturatedFatGrams?: number;
 }
 
+export type ProductSlotId = 'A' | 'B' | 'C' | 'D' | 'E';
+
 export interface ProductInput {
-  slot: 'A' | 'B';
+  slot: ProductSlotId;
   name: string;
   brand: string;
   category: ProductCategory;
@@ -169,7 +171,7 @@ export interface EvaluatedProduct {
 }
 
 export interface ComparisonVerdict {
-  betterChoice: 'A' | 'B' | 'Tie';
+  betterChoice: ProductSlotId | 'Tie' | 'Single';
   headlineSummary: string;
   plainLanguageExplanation: string;
   keyTradeOffs: string[];
@@ -185,7 +187,6 @@ export interface ComparisonVerdict {
 export interface ComparisonReport {
   id: string;
   generatedAt: string;
-  productA: EvaluatedProduct;
-  productB: EvaluatedProduct;
+  products: EvaluatedProduct[];
   verdict: ComparisonVerdict;
 }

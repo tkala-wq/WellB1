@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Download,
   Loader2,
+  Plus,
   RotateCcw,
   Scale,
   Smartphone,
@@ -24,7 +25,12 @@ import {
   SAFE_COMMON_INGREDIENTS
 } from './data/regulatoryData';
 import { useOnlineStatus, usePWAInstall } from './hooks/usePWAInstall';
-import { ComparisonReport, GlossaryTerm, ProductInput } from './types/product';
+import {
+  ComparisonReport,
+  GlossaryTerm,
+  ProductInput,
+  ProductSlotId
+} from './types/product';
 import {
   AiIngredientAnnotation,
   buildComparisonReport,
@@ -33,7 +39,9 @@ import {
 
 type ActiveNavTab = 'studio' | 'glossary' | 'additives' | 'sources';
 
-const createEmptyProductInput = (slot: 'A' | 'B'): ProductInput => ({
+const SLOT_IDS: ProductSlotId[] = ['A', 'B', 'C', 'D', 'E'];
+
+const createEmptyProductInput = (slot: ProductSlotId): ProductInput => ({
   slot,
   name: '',
   brand: '',
@@ -55,12 +63,9 @@ const GLOSSARY_STORAGE_KEY = 'kyp_custom_glossary_terms_v1';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveNavTab>('studio');
-  const [productA, setProductA] = useState<ProductInput>(() =>
+  const [products, setProducts] = useState<ProductInput[]>(() => [
     createEmptyProductInput('A')
-  );
-  const [productB, setProductB] = useState<ProductInput>(() =>
-    createEmptyProductInput('B')
-  );
+  ]);
 
   const [glossary, setGlossary] = useState<GlossaryTerm[]>(() => {
     try {
@@ -99,11 +104,55 @@ export default function App() {
   };
 
   const handleResetComparison = () => {
-    setProductA(createEmptyProductInput('A'));
-    setProductB(createEmptyProductInput('B'));
+    setProducts([createEmptyProductInput('A')]);
     setReport(null);
     setValidationError(null);
     setActiveTab('studio');
+  };
+
+  const handleUpdateProduct = (index: number, updated: ProductInput) => {
+    setProducts((prev) =>
+      prev.map((item, idx) => (idx === index ? updated : item))
+    );
+  };
+
+  const handleClearSlot = (index: number) => {
+    setProducts((prev) =>
+      prev.map((item, idx) =>
+        idx === index ? createEmptyProductInput(item.slot) : item
+      )
+    );
+  };
+
+  const handleAddProductSlot = () => {
+    setProducts((prev) => {
+      if (prev.length >= 5) return prev;
+      const nextSlot = SLOT_IDS[prev.length];
+      return [...prev, createEmptyProductInput(nextSlot)];
+    });
+  };
+
+  const handleRemoveProductSlot = (index: number) => {
+    setProducts((prev) => {
+      if (prev.length <= 1) return prev;
+      const filtered = prev.filter((_, idx) => idx !== index);
+      return filtered.map((item, idx) => ({
+        ...item,
+        slot: SLOT_IDS[idx]
+      }));
+    });
+  };
+
+  const isSlotTouched = (p: ProductInput): boolean => {
+    return (
+      p.name.trim() !== '' ||
+      p.brand.trim() !== '' ||
+      p.ingredientsRaw.trim() !== '' ||
+      p.claimsRaw.trim() !== '' ||
+      p.weblinkOrBarcode.trim() !== '' ||
+      Boolean(p.frontPhotoBase64) ||
+      Boolean(p.backPhotoBase64)
+    );
   };
 
   const isKnownLocally = (ingRaw: string): boolean => {
@@ -122,38 +171,46 @@ export default function App() {
   const handleRunComparison = async () => {
     setValidationError(null);
 
-    const listA = parseCommaOrLineSeparated(productA.ingredientsRaw);
-    const listB = parseCommaOrLineSeparated(productB.ingredientsRaw);
+    // Filter to slots that have user data; if only 1 slot exists, use it
+    const activeProducts =
+      products.length === 1
+        ? products
+        : products.filter((p) => isSlotTouched(p));
 
-    if (!productA.name.trim() || !productB.name.trim()) {
+    if (activeProducts.length === 0) {
       setValidationError(
-        'Please enter a Product Name for both Product A and Product B before generating the comparison report.'
+        'Please scan or enter at least 1 product (Product Name and Ingredient List) before running the analysis.'
       );
       return;
     }
 
-    if (listA.length === 0 || listB.length === 0) {
-      setValidationError(
-        'Both products require an ingredient list (either extracted via Gemini Label OCR or entered in the ingredient field).'
-      );
-      return;
-    }
+    for (const prod of activeProducts) {
+      const ingList = parseCommaOrLineSeparated(prod.ingredientsRaw);
+      if (!prod.name.trim()) {
+        setValidationError(
+          `Please enter a Product Name for Product ${prod.slot} (or extract it from a barcode / label photo).`
+        );
+        return;
+      }
+      if (ingList.length === 0) {
+        setValidationError(
+          `Product ${prod.slot} (${prod.name}) requires an ingredient list. Extract it from a barcode/label photo or enter the ingredients in the field.`
+        );
+        return;
+      }
 
-    const priceA = parseFloat(productA.price);
-    const qtyA = parseFloat(productA.quantity);
-    const priceB = parseFloat(productB.price);
-    const qtyB = parseFloat(productB.quantity);
-
-    if (
-      (productA.price.trim() !== '' && (Number.isNaN(priceA) || priceA <= 0)) ||
-      (productA.quantity.trim() !== '' && (Number.isNaN(qtyA) || qtyA <= 0)) ||
-      (productB.price.trim() !== '' && (Number.isNaN(priceB) || priceB <= 0)) ||
-      (productB.quantity.trim() !== '' && (Number.isNaN(qtyB) || qtyB <= 0))
-    ) {
-      setValidationError(
-        'If entering Price or Quantity, please use a positive number (or leave blank to skip Quality ROI).'
-      );
-      return;
+      const priceVal = parseFloat(prod.price);
+      const qtyVal = parseFloat(prod.quantity);
+      if (
+        (prod.price.trim() !== '' &&
+          (Number.isNaN(priceVal) || priceVal <= 0)) ||
+        (prod.quantity.trim() !== '' && (Number.isNaN(qtyVal) || qtyVal <= 0))
+      ) {
+        setValidationError(
+          `For Product ${prod.slot}, please enter a positive number for Price and Quantity (or leave blank to skip Quality ROI).`
+        );
+        return;
+      }
     }
 
     setIsComparing(true);
@@ -161,21 +218,24 @@ export default function App() {
     const aiAnnotationsMap: Record<string, AiIngredientAnnotation> = {};
 
     try {
-      // Find any ingredients not already in our deterministic database to query against the 9 allowed authorities
+      const allActiveIngredients = activeProducts.flatMap((p) =>
+        parseCommaOrLineSeparated(p.ingredientsRaw)
+      );
       const unknownIngredients = Array.from(
-        new Set([...listA, ...listB].filter((i) => !isKnownLocally(i)))
+        new Set(allActiveIngredients.filter((i) => !isKnownLocally(i)))
       );
 
       if (unknownIngredients.length > 0) {
+        const categoriesSummary = Array.from(
+          new Set(activeProducts.map((p) => p.category))
+        ).join(', ');
+
         const response = await fetch('/api/evaluate-ingredients', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             ingredients: unknownIngredients,
-            category:
-              productA.category === productB.category
-                ? productA.category
-                : `${productA.category} and ${productB.category}`
+            category: categoriesSummary
           })
         });
 
@@ -195,8 +255,7 @@ export default function App() {
     }
 
     const generated = buildComparisonReport(
-      productA,
-      productB,
+      activeProducts,
       glossary,
       aiAnnotationsMap
     );
@@ -323,15 +382,15 @@ export default function App() {
                   Bodies · Zero Journalism Ratings
                 </div>
                 <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">
-                  Compare Two Products Side by Side
+                  Analyze 1 Product or Compare Up to 5 Products
                 </h1>
                 <p className="text-sm text-slate-600 leading-relaxed">
-                  Upload front and back packaging photos, enter a product URL or
-                  barcode, or type label details below. Every ingredient and
-                  packaging claim is audited against FDA, USDA, EPA, CDC, NIH,
-                  EFSA, WHO/IARC, Codex Alimentarius, and FSSAI registries to
-                  determine a clear <strong>Red / Yellow / Green Wellbeing Rating</strong> and{' '}
-                  <strong>Quality ROI</strong>.
+                  Scan a single barcode photo, upload front and back packaging
+                  photos, or enter product details below. Run a standalone
+                  regulatory audit on <strong>1 product</strong>, or add up to{' '}
+                  <strong>5 products (Slots A–E)</strong> to compare their{' '}
+                  <strong>Red / Yellow / Green Wellbeing Rating</strong> and{' '}
+                  <strong>Quality ROI</strong> side by side.
                 </p>
 
                 {!isInstalled && (
@@ -384,50 +443,96 @@ export default function App() {
               </div>
             </div>
 
-            {/* Dual Product Input Grid (Blank Comparison Slate) */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
-              <ProductInputCard
-                product={productA}
-                onChange={setProductA}
-                onClearSlot={() => setProductA(createEmptyProductInput('A'))}
-              />
-              <ProductInputCard
-                product={productB}
-                onChange={setProductB}
-                onClearSlot={() => setProductB(createEmptyProductInput('B'))}
-              />
+            {/* Slot Count & Add Product Toolbar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-white border border-slate-200 rounded-xl px-5 py-3.5">
+              <div className="text-xs font-medium text-slate-700">
+                Active Product Slots:{' '}
+                <strong className="text-slate-900 font-mono tabular-nums">
+                  {products.length} / 5
+                </strong>{' '}
+                <span className="text-slate-500 ml-1">
+                  (Analyze 1 product alone, or add up to 5 products to compare)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {products.length < 5 && (
+                  <button
+                    type="button"
+                    onClick={handleAddProductSlot}
+                    className="min-h-[38px] px-3.5 py-1.5 text-xs font-semibold text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-lg transition-colors inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-teal-700" />
+                    Add Product Slot (Slot {SLOT_IDS[products.length]})
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Dynamic Product Input Grid (1 to 5 Products) */}
+            <div
+              className={`grid gap-6 items-stretch ${
+                products.length === 1
+                  ? 'grid-cols-1'
+                  : 'grid-cols-1 lg:grid-cols-2'
+              }`}
+            >
+              {products.map((prod, idx) => (
+                <ProductInputCard
+                  key={prod.slot}
+                  product={prod}
+                  onChange={(updated) => handleUpdateProduct(idx, updated)}
+                  onClearSlot={() => handleClearSlot(idx)}
+                  canRemoveSlot={products.length > 1}
+                  onRemoveSlot={() => handleRemoveProductSlot(idx)}
+                />
+              ))}
             </div>
 
             {/* Action Bar to Generate 5-Section Report */}
             <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="space-y-0.5">
                 <div className="text-sm font-semibold text-slate-900">
-                  Ready to Run the 5-Section Regulatory Comparison?
+                  Ready to Run the 5-Section Regulatory Analysis?
                 </div>
                 <p className="text-xs text-slate-500">
-                  Audits ingredient safety, plastic/endocrine concerns,
-                  packaging claims, Wellbeing Index, and Quality ROI.
+                  Works with 1 product or up to 5 products — audits ingredient
+                  safety, plastic/endocrine concerns, packaging claims,
+                  Wellbeing Rating, and Quality ROI.
                 </p>
               </div>
 
-              <button
-                type="button"
-                disabled={isComparing}
-                onClick={handleRunComparison}
-                className="w-full sm:w-auto px-6 py-3 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg transition-colors flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
-              >
-                {isComparing ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Auditing Registries & Computing Scores...
-                  </>
-                ) : (
-                  <>
-                    Generate 5-Section Comparison Report
-                    <ArrowRight className="w-4 h-4" />
-                  </>
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full sm:w-auto">
+                {products.length < 5 && (
+                  <button
+                    type="button"
+                    onClick={handleAddProductSlot}
+                    className="px-4 py-3 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Add Another Product ({products.length}/5)
+                  </button>
                 )}
-              </button>
+                <button
+                  type="button"
+                  disabled={isComparing}
+                  onClick={handleRunComparison}
+                  className="px-6 py-3 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 rounded-lg transition-colors flex items-center justify-center gap-2 whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
+                >
+                  {isComparing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Auditing Registries & Computing Ratings...
+                    </>
+                  ) : (
+                    <>
+                      {products.filter(isSlotTouched).length <= 1
+                        ? 'Run 5-Section Product Analysis'
+                        : `Compare ${products.filter(isSlotTouched).length} Products (5-Section Report)`}
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
 
             {validationError && (

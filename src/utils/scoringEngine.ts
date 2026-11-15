@@ -444,8 +444,7 @@ export function calculateScorecard(
 }
 
 export function buildComparisonReport(
-  inputA: ProductInput,
-  inputB: ProductInput,
+  inputs: ProductInput[],
   glossary: GlossaryTerm[],
   aiAnnotationsMap: Record<string, AiIngredientAnnotation> = {}
 ): ComparisonReport {
@@ -455,8 +454,16 @@ export function buildComparisonReport(
     const ingredientEvaluations = ingredientsList.map((ing, idx) =>
       evaluateSingleIngredient(ing, idx, aiAnnotationsMap)
     );
-    const claimEvaluations = evaluateClaims(claimsList, ingredientEvaluations, glossary);
-    const scorecard = calculateScorecard(input, ingredientEvaluations, claimEvaluations);
+    const claimEvaluations = evaluateClaims(
+      claimsList,
+      ingredientEvaluations,
+      glossary
+    );
+    const scorecard = calculateScorecard(
+      input,
+      ingredientEvaluations,
+      claimEvaluations
+    );
 
     return {
       input,
@@ -468,84 +475,22 @@ export function buildComparisonReport(
     };
   };
 
-  const productA = evaluateProduct(inputA);
-  const productB = evaluateProduct(inputB);
+  const evaluatedProducts = inputs.map(evaluateProduct);
+  const isSingleProduct = evaluatedProducts.length === 1;
 
-  const scoreDiff = productA.scorecard.wellbeingIndex - productB.scorecard.wellbeingIndex;
-  let betterChoice: 'A' | 'B' | 'Tie' = 'Tie';
-  if (Math.abs(scoreDiff) >= 3) {
-    betterChoice = scoreDiff > 0 ? 'A' : 'B';
-  } else if (
-    productA.scorecard.qualityRoi !== null &&
-    productB.scorecard.qualityRoi !== null &&
-    productA.scorecard.qualityRoi !== productB.scorecard.qualityRoi
-  ) {
-    betterChoice =
-      productA.scorecard.qualityRoi > productB.scorecard.qualityRoi ? 'A' : 'B';
-  }
-
-  const winner = betterChoice === 'B' ? productB : productA;
-  const runnerUp = betterChoice === 'B' ? productA : productB;
-
-  const headlineSummary =
-    betterChoice === 'Tie'
-      ? `${productA.input.name || 'Product A'} (${productA.scorecard.wellbeingTier.split(' (')[0]}) and ${productB.input.name || 'Product B'} (${productB.scorecard.wellbeingTier.split(' (')[0]}) achieve comparable overall ratings.`
-      : `${winner.input.brand ? `${winner.input.brand} ` : ''}${winner.input.name} is the recommended choice (${winner.scorecard.wellbeingTier.split(' (')[0]} vs. ${runnerUp.scorecard.wellbeingTier.split(' (')[0]}).`;
-
-  const highRiskA = productA.ingredientEvaluations.filter((i) => i.riskTier === 'High');
-  const highRiskB = productB.ingredientEvaluations.filter((i) => i.riskTier === 'High');
-
-  const bothHaveRoi =
-    productA.scorecard.qualityRoi !== null && productB.scorecard.qualityRoi !== null;
-
-  const plainLanguageExplanation =
-    betterChoice === 'Tie'
-      ? bothHaveRoi
-        ? `Both products perform similarly across safety and claim transparency. Compare their unit price ($${productA.scorecard.unitPrice}/${productA.input.quantityUnit} vs. $${productB.scorecard.unitPrice}/${productB.input.quantityUnit}) and check the specific sensitivity callouts below to pick the right fit for your household.`
-        : `Both products perform similarly across safety and claim transparency. Check the specific sensitivity callouts below (or optionally add price and quantity for a Quality ROI tie-breaker) to pick the right fit for your household.`
-      : `${winner.input.name} earns a ${winner.scorecard.wellbeingTier} rating because it avoids key high-concern additives found in ${runnerUp.input.name} (${runnerUp.ingredientEvaluations.filter((i) => i.riskTier !== 'Low' && i.riskTier !== 'No authoritative data found').map((i) => i.ingredientName).slice(0, 3).join(', ') || 'fewer flagged ingredients'}) while maintaining stronger alignment between its packaging claims and actual ingredient list.`;
-
-  const keyTradeOffs: string[] = [
-    `${productA.input.name || 'Product A'} is rated ${productA.scorecard.wellbeingTier} (${highRiskA.length} High-Risk, ${productA.ingredientEvaluations.filter((i) => i.riskTier === 'Moderate').length} Moderate-Risk flags), whereas ${productB.input.name || 'Product B'} is rated ${productB.scorecard.wellbeingTier} (${highRiskB.length} High-Risk, ${productB.ingredientEvaluations.filter((i) => i.riskTier === 'Moderate').length} Moderate-Risk flags).`
-  ];
-
-  if (bothHaveRoi) {
-    keyTradeOffs.push(
-      `Price & Quantity Trade-Off: ${productA.input.name || 'Product A'} costs $${productA.scorecard.priceNumeric.toFixed(2)} for ${productA.scorecard.quantityNumeric} ${productA.input.quantityUnit} ($${productA.scorecard.unitPrice}/${productA.input.quantityUnit}), compared to $${productB.scorecard.priceNumeric.toFixed(2)} for ${productB.scorecard.quantityNumeric} ${productB.input.quantityUnit} ($${productB.scorecard.unitPrice}/${productB.input.quantityUnit}) for ${productB.input.name || 'Product B'}.`
-    );
-  } else if (productA.scorecard.priceNumeric > 0 || productB.scorecard.priceNumeric > 0) {
-    const priceDescA =
-      productA.scorecard.priceNumeric > 0
-        ? `$${productA.scorecard.priceNumeric.toFixed(2)}`
-        : 'price omitted';
-    const priceDescB =
-      productB.scorecard.priceNumeric > 0
-        ? `$${productB.scorecard.priceNumeric.toFixed(2)}`
-        : 'price omitted';
-    keyTradeOffs.push(
-      `Price Note: ${productA.input.name || 'Product A'} (${priceDescA}) vs. ${productB.input.name || 'Product B'} (${priceDescB}). Enter both price and quantity on both products to compare Quality ROI.`
-    );
-  }
-
-  if (productA.input.unreadableFlags.length > 0 || productB.input.unreadableFlags.length > 0) {
-    keyTradeOffs.push(
-      'Unreadable Label Notice: At least one product had partially illegible label sections flagged during intake; ratings reflect only verified readable text without guessing.'
-    );
-  }
-
-  const roiComparisonSummary = bothHaveRoi
-    ? `${productA.input.name || 'Product A'} achieves a Quality ROI of ${productA.scorecard.qualityRoi} versus ${productB.scorecard.qualityRoi} for ${productB.input.name || 'Product B'}.`
-    : 'Pricing omitted (optional) — verdict is based on the Red / Yellow / Green Wellbeing Rating. Add price and quantity anytime to include Quality ROI.';
-
-  // Build precautions for Children, Pregnancy, Allergies
-  const gatherPrecautions = (group: 'children' | 'pregnancy' | 'allergies'): string[] => {
+  // Build precautions for Children, Pregnancy, Allergies across all evaluated products
+  const gatherPrecautions = (
+    group: 'children' | 'pregnancy' | 'allergies'
+  ): string[] => {
     const notes: string[] = [];
-    [productA, productB].forEach((prod) => {
+    evaluatedProducts.forEach((prod) => {
       const flagged = prod.ingredientEvaluations.filter((ing) =>
         ing.vulnerableFlags.includes(group)
       );
       if (flagged.length > 0) {
-        const names = flagged.map((f) => `${f.ingredientName} (${f.primaryAuthority})`).join(', ');
+        const names = flagged
+          .map((f) => `${f.ingredientName} (${f.primaryAuthority})`)
+          .join(', ');
         notes.push(
           `${prod.input.name || `Product ${prod.input.slot}`}: Contains ${names} — review official ${flagged[0].primaryAuthority} guidance before frequent household use.`
         );
@@ -553,11 +498,164 @@ export function buildComparisonReport(
     });
     if (notes.length === 0) {
       notes.push(
-        `No specific ${group}-targeted regulatory flags identified in the declared ingredients of either product.`
+        isSingleProduct
+          ? `No specific ${group}-targeted regulatory flags identified in the declared ingredients of this product.`
+          : `No specific ${group}-targeted regulatory flags identified in the declared ingredients of the analyzed products.`
       );
     }
     return notes;
   };
+
+  const medicalDisclaimer =
+    'Informational Label Analysis Only — Not Medical Advice: This report summarizes published regulatory registries (FDA, USDA, EPA, CDC, NIH, EFSA, WHO/IARC, Codex Alimentarius, FSSAI) in plain language for in-store shopping decisions. It does not diagnose, treat, or replace personalized guidance from a qualified physician, pediatrician, obstetrician, or allergist.';
+
+  if (isSingleProduct) {
+    const prod = evaluatedProducts[0];
+    const prodTitle = `${prod.input.brand ? `${prod.input.brand} ` : ''}${prod.input.name || `Product ${prod.input.slot}`}`;
+    const highRisk = prod.ingredientEvaluations.filter(
+      (i) => i.riskTier === 'High'
+    );
+    const modRisk = prod.ingredientEvaluations.filter(
+      (i) => i.riskTier === 'Moderate'
+    );
+    const misleadingClaims = prod.claimEvaluations.filter(
+      (c) => c.status === 'Misleading / Unregulated'
+    );
+    const unverifiedClaims = prod.claimEvaluations.filter(
+      (c) => c.status === 'Unverified'
+    );
+
+    const headlineSummary = `${prodTitle} is rated ${prod.scorecard.wellbeingTier.split(' (')[0]} overall.`;
+
+    const plainLanguageExplanation =
+      prod.scorecard.wellbeingColor === 'Green'
+        ? `${prodTitle} earns a ${prod.scorecard.wellbeingTier} rating across ${prod.ingredientEvaluations.length} audited ingredients (${highRisk.length} High-Risk, ${modRisk.length} Moderate-Risk flags). Its formulation avoids high-concern synthetic additives and aligns well with regulatory standards.`
+        : prod.scorecard.wellbeingColor === 'Yellow'
+          ? `${prodTitle} earns a ${prod.scorecard.wellbeingTier} rating with ${highRisk.length} High-Risk and ${modRisk.length} Moderate-Risk ingredient flags across ${prod.ingredientEvaluations.length} total declared ingredients. Review the flagged additives and claim findings below to decide if it fits your household priorities.`
+          : `${prodTitle} is rated ${prod.scorecard.wellbeingTier} due to ${highRisk.length} High-Risk and ${modRisk.length} Moderate-Risk ingredient flags (${highRisk.concat(modRisk).map((i) => i.ingredientName).slice(0, 4).join(', ') || 'multiple regulatory concerns'}). Consider comparing an alternative product slot if avoiding these ingredients is a priority.`;
+
+    const keyTradeOffs: string[] = [
+      `Ingredient Profile: ${prod.ingredientEvaluations.length} declared ingredients audited — ${highRisk.length} High-Risk, ${modRisk.length} Moderate-Risk, and ${prod.ingredientEvaluations.filter((i) => i.isPlasticOrEndocrineConcern).length} plastic/endocrine-linked flags.`,
+      `Claim Audit: ${prod.claimEvaluations.length} packaging claim(s) checked (${prod.claimEvaluations.filter((c) => c.status === 'Verified Standard').length} Verified Standard, ${unverifiedClaims.length} Unverified, ${misleadingClaims.length} Misleading / Unregulated).`
+    ];
+
+    if (prod.scorecard.qualityRoi !== null) {
+      keyTradeOffs.push(
+        `Quality ROI: Priced at $${prod.scorecard.priceNumeric.toFixed(2)} for ${prod.scorecard.quantityNumeric} ${prod.input.quantityUnit} ($${prod.scorecard.unitPrice}/${prod.input.quantityUnit}), yielding a Quality ROI of ${prod.scorecard.qualityRoi}.`
+      );
+    }
+
+    if (prod.input.unreadableFlags.length > 0) {
+      keyTradeOffs.push(
+        'Transparency Notice: Unreadable or online barcode-lookup notes were recorded during intake; ratings reflect only verified ingredients without guessing.'
+      );
+    }
+
+    const roiComparisonSummary =
+      prod.scorecard.qualityRoi !== null
+        ? `${prodTitle} achieves a Quality ROI of ${prod.scorecard.qualityRoi} ($${prod.scorecard.unitPrice}/${prod.input.quantityUnit}). Add up to 4 more products anytime to compare Quality ROI side by side.`
+        : 'Pricing omitted (optional) — evaluation is based on the Red / Yellow / Green Wellbeing Rating. Add price & quantity or add more products (up to 5) to compare.';
+
+    return {
+      id: `cmp-${Date.now()}`,
+      generatedAt: new Date().toISOString(),
+      products: evaluatedProducts,
+      verdict: {
+        betterChoice: 'Single',
+        headlineSummary,
+        plainLanguageExplanation,
+        keyTradeOffs,
+        roiComparisonSummary,
+        precautions: {
+          children: gatherPrecautions('children'),
+          pregnancy: gatherPrecautions('pregnancy'),
+          allergies: gatherPrecautions('allergies')
+        },
+        medicalDisclaimer
+      }
+    };
+  }
+
+  // Multi-product comparison (2 to 5 products)
+  const sortedByScore = [...evaluatedProducts].sort((a, b) => {
+    const diff = b.scorecard.wellbeingIndex - a.scorecard.wellbeingIndex;
+    if (Math.abs(diff) >= 3) return diff;
+    if (
+      a.scorecard.qualityRoi !== null &&
+      b.scorecard.qualityRoi !== null &&
+      a.scorecard.qualityRoi !== b.scorecard.qualityRoi
+    ) {
+      return b.scorecard.qualityRoi - a.scorecard.qualityRoi;
+    }
+    return diff;
+  });
+
+  const topProduct = sortedByScore[0];
+  const secondProduct = sortedByScore[1];
+  const scoreDiff =
+    topProduct.scorecard.wellbeingIndex -
+    secondProduct.scorecard.wellbeingIndex;
+
+  let isTopTie = Math.abs(scoreDiff) < 3;
+  if (
+    isTopTie &&
+    topProduct.scorecard.qualityRoi !== null &&
+    secondProduct.scorecard.qualityRoi !== null &&
+    topProduct.scorecard.qualityRoi !== secondProduct.scorecard.qualityRoi
+  ) {
+    isTopTie = false;
+  }
+
+  const betterChoice: ComparisonVerdict['betterChoice'] = isTopTie
+    ? 'Tie'
+    : topProduct.input.slot;
+
+  const topTitle = `${topProduct.input.brand ? `${topProduct.input.brand} ` : ''}${topProduct.input.name || `Product ${topProduct.input.slot}`}`;
+  const secondTitle = `${secondProduct.input.brand ? `${secondProduct.input.brand} ` : ''}${secondProduct.input.name || `Product ${secondProduct.input.slot}`}`;
+
+  const headlineSummary = isTopTie
+    ? `${topTitle} (${topProduct.scorecard.wellbeingTier.split(' (')[0]}) and ${secondTitle} (${secondProduct.scorecard.wellbeingTier.split(' (')[0]}) achieve comparable top overall ratings across ${evaluatedProducts.length} products.`
+    : `${topTitle} (Slot ${topProduct.input.slot}) is the top recommended choice out of ${evaluatedProducts.length} products (${topProduct.scorecard.wellbeingTier.split(' (')[0]}).`;
+
+  const productsWithRoi = evaluatedProducts.filter(
+    (p) => p.scorecard.qualityRoi !== null
+  );
+
+  const plainLanguageExplanation = isTopTie
+    ? `The top contenders perform similarly across ingredient safety and claim transparency. Compare their specific additive flags, sensitivity callouts, and unit pricing below to select the best match for your household.`
+    : `${topTitle} earns a ${topProduct.scorecard.wellbeingTier} rating and leads the ${evaluatedProducts.length}-product comparison because it avoids higher-concern additives found in competing options (such as ${secondProduct.ingredientEvaluations.filter((i) => i.riskTier !== 'Low' && i.riskTier !== 'No authoritative data found').map((i) => i.ingredientName).slice(0, 3).join(', ') || 'flagged ingredients'}) while maintaining stronger alignment between its packaging claims and declared ingredient list.`;
+
+  const keyTradeOffs: string[] = evaluatedProducts.map((p) => {
+    const highCount = p.ingredientEvaluations.filter(
+      (i) => i.riskTier === 'High'
+    ).length;
+    const modCount = p.ingredientEvaluations.filter(
+      (i) => i.riskTier === 'Moderate'
+    ).length;
+    const priceInfo =
+      p.scorecard.priceNumeric > 0 && p.scorecard.quantityNumeric > 0
+        ? ` · $${p.scorecard.priceNumeric.toFixed(2)} / ${p.scorecard.quantityNumeric} ${p.input.quantityUnit} (ROI: ${p.scorecard.qualityRoi})`
+        : p.scorecard.priceNumeric > 0
+          ? ` · $${p.scorecard.priceNumeric.toFixed(2)}`
+          : '';
+    return `Slot ${p.input.slot} (${p.input.name || `Product ${p.input.slot}`}): Rated ${p.scorecard.wellbeingTier} — ${highCount} High-Risk, ${modCount} Moderate-Risk flags across ${p.ingredientEvaluations.length} ingredients${priceInfo}.`;
+  });
+
+  if (evaluatedProducts.some((p) => p.input.unreadableFlags.length > 0)) {
+    keyTradeOffs.push(
+      'Transparency Notice: At least one product has unreadable label or online barcode-lookup notes flagged during intake; ratings reflect only verified ingredients without guessing.'
+    );
+  }
+
+  const roiComparisonSummary =
+    productsWithRoi.length >= 2
+      ? productsWithRoi
+          .map(
+            (p) =>
+              `${p.input.name || `Slot ${p.input.slot}`}: ROI ${p.scorecard.qualityRoi}`
+          )
+          .join(' · ')
+      : 'Pricing omitted on one or more products (optional) — verdict is based on the Red / Yellow / Green Wellbeing Rating. Add price and quantity anytime to compare Quality ROI.';
 
   const verdict: ComparisonVerdict = {
     betterChoice,
@@ -570,15 +668,13 @@ export function buildComparisonReport(
       pregnancy: gatherPrecautions('pregnancy'),
       allergies: gatherPrecautions('allergies')
     },
-    medicalDisclaimer:
-      'Informational Label Analysis Only — Not Medical Advice: This report summarizes published regulatory registries (FDA, USDA, EPA, CDC, NIH, EFSA, WHO/IARC, Codex Alimentarius, FSSAI) in plain language for in-store shopping comparison. It does not diagnose, treat, or replace personalized guidance from a qualified physician, pediatrician, obstetrician, or allergist.'
+    medicalDisclaimer
   };
 
   return {
     id: `cmp-${Date.now()}`,
     generatedAt: new Date().toISOString(),
-    productA,
-    productB,
+    products: evaluatedProducts,
     verdict
   };
 }

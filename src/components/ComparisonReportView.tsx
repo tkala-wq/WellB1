@@ -29,7 +29,13 @@ export const ComparisonReportView: React.FC<ComparisonReportViewProps> = ({
   const [ingredientFilter, setIngredientFilter] =
     useState<IngredientFilter>('all');
 
-  const { productA, productB, verdict } = report;
+  const { products, verdict } = report;
+  const isSingleProduct = products.length === 1;
+  const cardGridColsClass = isSingleProduct
+    ? 'grid-cols-1'
+    : products.length === 2
+      ? 'grid-cols-1 lg:grid-cols-2'
+      : 'grid-cols-1 lg:grid-cols-2 xl:grid-cols-3';
 
   const filterIngredients = (
     list: IngredientEvaluation[]
@@ -145,64 +151,60 @@ export const ComparisonReportView: React.FC<ComparisonReportViewProps> = ({
 
   const renderSubScoreRow = (
     label: string,
-    subA: SubScoreDetail,
-    subB: SubScoreDetail
+    subKey: keyof EvaluatedProduct['scorecard']['subScores']
   ) => {
+    const weightSummary = products
+      .map(
+        (p) =>
+          `${p.scorecard.subScores[subKey].weightPercent}% (Slot ${p.input.slot})`
+      )
+      .join(' · ');
+
     return (
       <tr className="border-t border-slate-200">
-        <td className="py-3 px-4 align-top">
+        <td className="py-3 px-4 align-top min-w-[200px]">
           <div className="text-sm font-medium text-slate-900">{label}</div>
           <div className="text-xs text-slate-500 mt-0.5 font-mono tabular-nums">
-            Weight: {subA.weightPercent}% (Slot A) · {subB.weightPercent}% (Slot
-            B)
+            Weight: {weightSummary}
           </div>
         </td>
-        <td className="py-3 px-4 align-top">
-          <div className="flex items-center justify-between gap-2">
-            {renderTrafficLightHeading(subA.colorRating, subA.tier, 'sm')}
-          </div>
-          {typeof subA.score === 'number' && (
-            <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden mt-1.5">
-              <div
-                className={`h-full ${
-                  subA.colorRating === 'Green'
-                    ? 'bg-emerald-600'
-                    : subA.colorRating === 'Yellow'
-                      ? 'bg-amber-500'
-                      : 'bg-red-600'
-                }`}
-                style={{ width: `${subA.score}%` }}
-              />
-            </div>
-          )}
-          <p className="text-xs text-slate-600 mt-1.5">{subA.rationale}</p>
-        </td>
-        <td className="py-3 px-4 align-top">
-          <div className="flex items-center justify-between gap-2">
-            {renderTrafficLightHeading(subB.colorRating, subB.tier, 'sm')}
-          </div>
-          {typeof subB.score === 'number' && (
-            <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden mt-1.5">
-              <div
-                className={`h-full ${
-                  subB.colorRating === 'Green'
-                    ? 'bg-emerald-600'
-                    : subB.colorRating === 'Yellow'
-                      ? 'bg-amber-500'
-                      : 'bg-red-600'
-                }`}
-                style={{ width: `${subB.score}%` }}
-              />
-            </div>
-          )}
-          <p className="text-xs text-slate-600 mt-1.5">{subB.rationale}</p>
-        </td>
+        {products.map((prod) => {
+          const sub: SubScoreDetail = prod.scorecard.subScores[subKey];
+          return (
+            <td
+              key={prod.input.slot}
+              className="py-3 px-4 align-top min-w-[220px]"
+            >
+              <div className="flex items-center justify-between gap-2">
+                {renderTrafficLightHeading(sub.colorRating, sub.tier, 'sm')}
+              </div>
+              {typeof sub.score === 'number' && (
+                <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden mt-1.5">
+                  <div
+                    className={`h-full ${
+                      sub.colorRating === 'Green'
+                        ? 'bg-emerald-600'
+                        : sub.colorRating === 'Yellow'
+                          ? 'bg-amber-500'
+                          : 'bg-red-600'
+                    }`}
+                    style={{ width: `${sub.score}%` }}
+                  />
+                </div>
+              )}
+              <p className="text-xs text-slate-600 mt-1.5">{sub.rationale}</p>
+            </td>
+          );
+        })}
       </tr>
     );
   };
 
   const renderProductSnapshotCard = (prod: EvaluatedProduct) => (
-    <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-4">
+    <div
+      key={prod.input.slot}
+      className="bg-white border border-slate-200 rounded-xl p-6 space-y-4"
+    >
       <div className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4">
         <div>
           <div className="text-xs text-slate-500">
@@ -240,7 +242,7 @@ export const ComparisonReportView: React.FC<ComparisonReportViewProps> = ({
         <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-1">
           <div className="text-xs font-semibold text-amber-900 flex items-center gap-1.5">
             <FileWarning className="w-3.5 h-3.5 text-amber-700" />
-            Unreadable Label Disclosure (No-Guessing Rule)
+            Transparency & Label Notes (No-Guessing Rule)
           </div>
           {prod.input.unreadableFlags.map((flag, i) => (
             <p key={i} className="text-xs text-amber-800">
@@ -285,13 +287,13 @@ export const ComparisonReportView: React.FC<ComparisonReportViewProps> = ({
             01. Product Snapshot
           </h3>
           <p className="text-sm text-slate-600">
-            Side-by-side overview of product identity, declared packaging claims,
-            and complete ingredient list in label order.
+            {isSingleProduct
+              ? 'Overview of product identity, declared packaging claims, and complete ingredient list in label order.'
+              : `Side-by-side overview of ${products.length} products, declared packaging claims, and complete ingredient lists in label order.`}
           </p>
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
-          {renderProductSnapshotCard(productA)}
-          {renderProductSnapshotCard(productB)}
+        <div className={`grid ${cardGridColsClass} gap-6 items-stretch`}>
+          {products.map((prod) => renderProductSnapshotCard(prod))}
         </div>
       </section>
 
@@ -335,8 +337,8 @@ export const ComparisonReportView: React.FC<ComparisonReportViewProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
-          {[productA, productB].map((prod) => {
+        <div className={`grid ${cardGridColsClass} gap-6 items-stretch`}>
+          {products.map((prod) => {
             const filtered = filterIngredients(prod.ingredientEvaluations);
             return (
               <div
@@ -345,6 +347,7 @@ export const ComparisonReportView: React.FC<ComparisonReportViewProps> = ({
               >
                 <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
                   <span className="text-sm font-semibold text-slate-900">
+                    Slot {prod.input.slot}:{' '}
                     {prod.input.name || `Product ${prod.input.slot}`}
                   </span>
                   <span className="text-xs text-slate-500 font-mono tabular-nums">
@@ -450,14 +453,15 @@ export const ComparisonReportView: React.FC<ComparisonReportViewProps> = ({
           </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
-          {[productA, productB].map((prod) => (
+        <div className={`grid ${cardGridColsClass} gap-6 items-stretch`}>
+          {products.map((prod) => (
             <div
               key={prod.input.slot}
               className="bg-white border border-slate-200 rounded-xl overflow-hidden"
             >
               <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
                 <span className="text-sm font-semibold text-slate-900">
+                  Slot {prod.input.slot}:{' '}
                   {prod.input.name || `Product ${prod.input.slot}`} Claims Audit
                 </span>
                 <span className="text-xs text-slate-500 font-mono tabular-nums">
@@ -528,15 +532,18 @@ export const ComparisonReportView: React.FC<ComparisonReportViewProps> = ({
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200">
-                  <th className="py-3.5 px-4 text-xs font-semibold text-slate-700 w-1/4">
+                  <th className="py-3.5 px-4 text-xs font-semibold text-slate-700 min-w-[200px]">
                     Dimension
                   </th>
-                  <th className="py-3.5 px-4 text-xs font-semibold text-slate-900 w-3/8">
-                    Slot A: {productA.input.name || 'Product A'}
-                  </th>
-                  <th className="py-3.5 px-4 text-xs font-semibold text-slate-900 w-3/8">
-                    Slot B: {productB.input.name || 'Product B'}
-                  </th>
+                  {products.map((prod) => (
+                    <th
+                      key={prod.input.slot}
+                      className="py-3.5 px-4 text-xs font-semibold text-slate-900 min-w-[220px]"
+                    >
+                      Slot {prod.input.slot}:{' '}
+                      {prod.input.name || `Product ${prod.input.slot}`}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -549,56 +556,35 @@ export const ComparisonReportView: React.FC<ComparisonReportViewProps> = ({
                       Red (&lt;50 Bad) · Yellow (50–75 OK) · Green (75–100 Good)
                     </div>
                   </td>
-                  <td className="py-4 px-4 align-top">
-                    <div>
-                      {renderTrafficLightHeading(
-                        productA.scorecard.wellbeingColor,
-                        productA.scorecard.wellbeingTier,
-                        'lg'
-                      )}
-                    </div>
-                    <p className="text-xs text-slate-500 mt-1.5">
-                      {productA.scorecard.efficacyAndSafetyAnchor}
-                    </p>
-                  </td>
-                  <td className="py-4 px-4 align-top">
-                    <div>
-                      {renderTrafficLightHeading(
-                        productB.scorecard.wellbeingColor,
-                        productB.scorecard.wellbeingTier,
-                        'lg'
-                      )}
-                    </div>
-                    <p className="text-xs text-slate-500 mt-1.5">
-                      {productB.scorecard.efficacyAndSafetyAnchor}
-                    </p>
-                  </td>
+                  {products.map((prod) => (
+                    <td key={prod.input.slot} className="py-4 px-4 align-top">
+                      <div>
+                        {renderTrafficLightHeading(
+                          prod.scorecard.wellbeingColor,
+                          prod.scorecard.wellbeingTier,
+                          'lg'
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1.5">
+                        {prod.scorecard.efficacyAndSafetyAnchor}
+                      </p>
+                    </td>
+                  ))}
                 </tr>
 
-                {renderSubScoreRow(
-                  'Ingredient Safety',
-                  productA.scorecard.subScores.ingredientSafety,
-                  productB.scorecard.subScores.ingredientSafety
-                )}
-                {renderSubScoreRow(
-                  'Additives & Plastic Concerns',
-                  productA.scorecard.subScores.additives,
-                  productB.scorecard.subScores.additives
-                )}
+                {renderSubScoreRow('Ingredient Safety', 'ingredientSafety')}
+                {renderSubScoreRow('Additives & Plastic Concerns', 'additives')}
                 {renderSubScoreRow(
                   'Processing Level (Food Only — T0.1)',
-                  productA.scorecard.subScores.processingLevel,
-                  productB.scorecard.subScores.processingLevel
+                  'processingLevel'
                 )}
                 {renderSubScoreRow(
                   'Nutrition Balance (Food Only — T0.1)',
-                  productA.scorecard.subScores.nutritionBalance,
-                  productB.scorecard.subScores.nutritionBalance
+                  'nutritionBalance'
                 )}
                 {renderSubScoreRow(
                   'Packaging Claim Integrity',
-                  productA.scorecard.subScores.claimIntegrity,
-                  productB.scorecard.subScores.claimIntegrity
+                  'claimIntegrity'
                 )}
 
                 {/* Quality ROI Row (T4.4) */}
@@ -611,26 +597,18 @@ export const ComparisonReportView: React.FC<ComparisonReportViewProps> = ({
                       Wellbeing Index ÷ Price ÷ Quantity × 100
                     </div>
                   </td>
-                  <td className="py-4 px-4 align-top">
-                    <div className="text-xl font-bold font-mono tabular-nums text-teal-900">
-                      {productA.scorecard.qualityRoi !== null
-                        ? productA.scorecard.qualityRoi
-                        : 'N/A'}
-                    </div>
-                    <div className="text-xs font-mono text-slate-600 mt-1 tabular-nums">
-                      {productA.scorecard.qualityRoiFormulaText}
-                    </div>
-                  </td>
-                  <td className="py-4 px-4 align-top">
-                    <div className="text-xl font-bold font-mono tabular-nums text-teal-900">
-                      {productB.scorecard.qualityRoi !== null
-                        ? productB.scorecard.qualityRoi
-                        : 'N/A'}
-                    </div>
-                    <div className="text-xs font-mono text-slate-600 mt-1 tabular-nums">
-                      {productB.scorecard.qualityRoiFormulaText}
-                    </div>
-                  </td>
+                  {products.map((prod) => (
+                    <td key={prod.input.slot} className="py-4 px-4 align-top">
+                      <div className="text-xl font-bold font-mono tabular-nums text-teal-900">
+                        {prod.scorecard.qualityRoi !== null
+                          ? prod.scorecard.qualityRoi
+                          : 'N/A'}
+                      </div>
+                      <div className="text-xs font-mono text-slate-600 mt-1 tabular-nums">
+                        {prod.scorecard.qualityRoiFormulaText}
+                      </div>
+                    </td>
+                  ))}
                 </tr>
               </tbody>
             </table>

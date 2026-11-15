@@ -15,7 +15,8 @@ import {
   SlidersHorizontal,
   Sparkles,
   Trash2,
-  Upload
+  Upload,
+  X
 } from 'lucide-react';
 import { InputMode, ProductCategory, ProductInput } from '../types/product';
 import { compressLabelImage } from '../utils/imageCompression';
@@ -24,12 +25,16 @@ interface ProductInputCardProps {
   product: ProductInput;
   onChange: (updated: ProductInput) => void;
   onClearSlot: () => void;
+  canRemoveSlot?: boolean;
+  onRemoveSlot?: () => void;
 }
 
 export const ProductInputCard: React.FC<ProductInputCardProps> = ({
   product,
   onChange,
-  onClearSlot
+  onClearSlot,
+  canRemoveSlot,
+  onRemoveSlot
 }) => {
   const [isExtracting, setIsExtracting] = useState(false);
   const [isCompressing, setIsCompressing] = useState<
@@ -337,14 +342,26 @@ export const ProductInputCard: React.FC<ProductInputCardProps> = ({
                 : `Product ${product.slot} Intake`}
             </h2>
           </div>
-          <button
-            type="button"
-            onClick={onClearSlot}
-            className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            Reset Slot
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onClearSlot}
+              className="px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Reset
+            </button>
+            {canRemoveSlot && onRemoveSlot && (
+              <button
+                type="button"
+                onClick={onRemoveSlot}
+                className="px-2.5 py-1.5 text-xs font-medium text-red-700 hover:text-red-900 border border-red-200 rounded-lg hover:bg-red-50 transition-colors whitespace-nowrap shrink-0 flex items-center gap-1"
+              >
+                <X className="w-3.5 h-3.5" />
+                Remove Slot
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Category & Input Scenario Mode */}
