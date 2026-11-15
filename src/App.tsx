@@ -3,9 +3,13 @@ import {
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
+  Download,
   Loader2,
   RotateCcw,
-  Scale
+  Scale,
+  Smartphone,
+  WifiOff,
+  X
 } from 'lucide-react';
 import { ComparisonReportView } from './components/ComparisonReportView';
 import { ProductInputCard } from './components/ProductInputCard';
@@ -19,6 +23,7 @@ import {
   INITIAL_GLOSSARY_TERMS,
   SAFE_COMMON_INGREDIENTS
 } from './data/regulatoryData';
+import { useOnlineStatus, usePWAInstall } from './hooks/usePWAInstall';
 import { ComparisonReport, GlossaryTerm, ProductInput } from './types/product';
 import {
   AiIngredientAnnotation,
@@ -75,6 +80,10 @@ export default function App() {
   const [report, setReport] = useState<ComparisonReport | null>(null);
   const [isComparing, setIsComparing] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [showInstallGuide, setShowInstallGuide] = useState(false);
+
+  const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
+  const isOnline = useOnlineStatus();
 
   const reportSectionRef = useRef<HTMLDivElement | null>(null);
 
@@ -324,6 +333,33 @@ export default function App() {
                   determine a clear <strong>Red / Yellow / Green Wellbeing Rating</strong> and{' '}
                   <strong>Quality ROI</strong>.
                 </p>
+
+                {!isInstalled && (
+                  <div className="pt-1 flex flex-wrap items-center gap-3">
+                    {isInstallable ? (
+                      <button
+                        type="button"
+                        onClick={install}
+                        className="min-h-[40px] px-3.5 py-2 text-xs font-medium text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-lg transition-colors inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5 text-teal-700" />
+                        Install App on Phone
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setShowInstallGuide(true)}
+                        className="min-h-[40px] px-3.5 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                      >
+                        <Smartphone className="w-3.5 h-3.5 text-teal-700" />
+                        {isIOS ? 'Install on iPhone / iPad' : 'Save App to Phone Home Screen'}
+                      </button>
+                    )}
+                    <span className="text-xs text-slate-500">
+                      Optimized for in-store rear camera scanning & offline registry access
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg space-y-1.5 shrink-0 lg:w-80">
@@ -434,6 +470,63 @@ export default function App() {
 
         {activeTab === 'sources' && <SourceRulesView />}
       </main>
+
+      {/* Offline Connectivity Banner */}
+      {!isOnline && (
+        <div className="fixed bottom-4 left-4 right-4 sm:right-auto z-50 flex items-center gap-2 rounded-lg bg-amber-600 px-3.5 py-2.5 text-xs font-medium text-white shadow-lg">
+          <WifiOff className="w-4 h-4 shrink-0" />
+          <span>
+            Offline Mode — Built-in regulatory registries and Red/Yellow/Green evaluations work offline; Gemini photo OCR will resume when online.
+          </span>
+        </div>
+      )}
+
+      {/* Mobile Home Screen Install Guide Modal */}
+      {showInstallGuide && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white border border-slate-200 p-6 shadow-xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <h3 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+                <Smartphone className="w-4 h-4 text-teal-700" />
+                Install on Your Phone
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowInstallGuide(false)}
+                className="p-1 text-slate-400 hover:text-slate-700"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-3 text-xs text-slate-600 leading-relaxed">
+              <div>
+                <strong className="text-slate-900 block mb-0.5">
+                  iPhone / iPad (Safari):
+                </strong>
+                1. Tap the <strong>Share</strong> button in the Safari toolbar.
+                <br />
+                2. Scroll down and tap <strong>Add to Home Screen</strong>.
+              </div>
+              <div>
+                <strong className="text-slate-900 block mb-0.5">
+                  Android (Chrome):
+                </strong>
+                1. Tap the three-dot browser menu in the top corner.
+                <br />
+                2. Tap <strong>Install app</strong> or{' '}
+                <strong>Add to Home screen</strong>.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowInstallGuide(false)}
+              className="w-full min-h-[42px] rounded-lg bg-teal-700 hover:bg-teal-800 py-2 text-xs font-semibold text-white transition-colors"
+            >
+              Got It
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Quiet Footer */}
       <footer className="bg-white border-t border-slate-200 px-6 py-5 mt-12">

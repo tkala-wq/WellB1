@@ -12,6 +12,7 @@ import {
   Upload
 } from 'lucide-react';
 import { InputMode, ProductCategory, ProductInput } from '../types/product';
+import { compressLabelImage } from '../utils/imageCompression';
 
 interface ProductInputCardProps {
   product: ProductInput;
@@ -25,12 +26,17 @@ export const ProductInputCard: React.FC<ProductInputCardProps> = ({
   onClearSlot
 }) => {
   const [isExtracting, setIsExtracting] = useState(false);
+  const [isCompressing, setIsCompressing] = useState<'front' | 'back' | null>(
+    null
+  );
   const [extractError, setExtractError] = useState<string | null>(null);
   const [extractSuccess, setExtractSuccess] = useState<string | null>(null);
   const [customUnreadableNote, setCustomUnreadableNote] = useState('');
 
   const frontInputRef = useRef<HTMLInputElement | null>(null);
+  const frontCameraRef = useRef<HTMLInputElement | null>(null);
   const backInputRef = useRef<HTMLInputElement | null>(null);
+  const backCameraRef = useRef<HTMLInputElement | null>(null);
 
   const updateField = <K extends keyof ProductInput>(
     key: K,
@@ -42,32 +48,37 @@ export const ProductInputCard: React.FC<ProductInputCardProps> = ({
     });
   };
 
-  const handlePhotoUpload = (
+  const handlePhotoUpload = async (
     side: 'front' | 'back',
     e: React.ChangeEvent<HTMLInputElement>
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = typeof reader.result === 'string' ? reader.result : '';
+    setIsCompressing(side);
+    try {
+      const compressed = await compressLabelImage(file, 1600, 0.84);
+      const labelTitle = `${file.name} (${compressed.sizeKb} KB optimized)`;
       if (side === 'front') {
         onChange({
           ...product,
-          frontPhotoBase64: base64,
-          frontPhotoName: file.name
+          frontPhotoBase64: compressed.dataUrl,
+          frontPhotoName: labelTitle
         });
       } else {
         onChange({
           ...product,
-          backPhotoBase64: base64,
-          backPhotoName: file.name
+          backPhotoBase64: compressed.dataUrl,
+          backPhotoName: labelTitle
         });
       }
       setExtractError(null);
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      setExtractError('Could not process the selected photo. Please try again.');
+    } finally {
+      setIsCompressing(null);
+      e.target.value = '';
+    }
   };
 
   const handleExtractWithGemini = async () => {
@@ -282,10 +293,10 @@ export const ProductInputCard: React.FC<ProductInputCardProps> = ({
         {/* Photo Upload Dropzones (Front & Back per T6.1) */}
         {showPhotoSection && (
           <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-medium text-slate-700 flex items-center gap-1.5">
                 <Camera className="w-3.5 h-3.5 text-teal-700" />
-                Front & Back Label Photos (Multimodal OCR)
+                Front & Back Label Photos (Auto-Compressed for Mobile)
               </span>
               <span className="text-xs text-slate-500">
                 No-Guessing Rule Active
@@ -302,13 +313,21 @@ export const ProductInputCard: React.FC<ProductInputCardProps> = ({
                   className="hidden"
                   onChange={(e) => handlePhotoUpload('front', e)}
                 />
+                <input
+                  ref={frontCameraRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  onChange={(e) => handlePhotoUpload('front', e)}
+                />
                 {product.frontPhotoBase64 ? (
                   <div className="space-y-2">
                     <img
                       src={product.frontPhotoBase64}
                       alt={`Product ${product.slot} front label`}
                       referrerPolicy="no-referrer"
-                      className="w-full h-24 object-cover rounded border border-slate-200"
+                      className="w-full h-28 object-cover rounded border border-slate-200"
                     />
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs text-slate-600 truncate">
@@ -323,26 +342,43 @@ export const ProductInputCard: React.FC<ProductInputCardProps> = ({
                             frontPhotoName: undefined
                           });
                         }}
-                        className="text-xs text-red-600 hover:underline whitespace-nowrap shrink-0"
+                        className="text-xs text-red-600 hover:underline whitespace-nowrap shrink-0 py-1 px-2"
                       >
                         Remove
                       </button>
                     </div>
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => frontInputRef.current?.click()}
-                    className="w-full py-4 flex flex-col items-center justify-center text-center gap-1 text-slate-600 hover:text-slate-900"
-                  >
-                    <Upload className="w-4 h-4 text-slate-500" />
-                    <span className="text-xs font-medium">
-                      Upload Front Label
-                    </span>
-                    <span className="text-[11px] text-slate-500">
-                      Brand & marketing claims
-                    </span>
-                  </button>
+                  <div className="space-y-2">
+                    <div className="text-center pt-1">
+                      <div className="text-xs font-semibold text-slate-800">
+                        Front Label Photo
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        Brand & packaging claims
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <button
+                        type="button"
+                        disabled={isCompressing === 'front'}
+                        onClick={() => frontCameraRef.current?.click()}
+                        className="min-h-[44px] px-2.5 py-2 text-xs font-medium text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-lg flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                      >
+                        <Camera className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+                        {isCompressing === 'front' ? 'Sizing...' : 'Camera'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isCompressing === 'front'}
+                        onClick={() => frontInputRef.current?.click()}
+                        className="min-h-[44px] px-2.5 py-2 text-xs font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                      >
+                        <Upload className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                        Library
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
 
@@ -355,13 +391,21 @@ export const ProductInputCard: React.FC<ProductInputCardProps> = ({
                   className="hidden"
                   onChange={(e) => handlePhotoUpload('back', e)}
                 />
+                <input
+                  ref={backCameraRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  onChange={(e) => handlePhotoUpload('back', e)}
+                />
                 {product.backPhotoBase64 ? (
                   <div className="space-y-2">
                     <img
                       src={product.backPhotoBase64}
                       alt={`Product ${product.slot} back label`}
                       referrerPolicy="no-referrer"
-                      className="w-full h-24 object-cover rounded border border-slate-200"
+                      className="w-full h-28 object-cover rounded border border-slate-200"
                     />
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs text-slate-600 truncate">
@@ -376,26 +420,43 @@ export const ProductInputCard: React.FC<ProductInputCardProps> = ({
                             backPhotoName: undefined
                           });
                         }}
-                        className="text-xs text-red-600 hover:underline whitespace-nowrap shrink-0"
+                        className="text-xs text-red-600 hover:underline whitespace-nowrap shrink-0 py-1 px-2"
                       >
                         Remove
                       </button>
                     </div>
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => backInputRef.current?.click()}
-                    className="w-full py-4 flex flex-col items-center justify-center text-center gap-1 text-slate-600 hover:text-slate-900"
-                  >
-                    <Upload className="w-4 h-4 text-slate-500" />
-                    <span className="text-xs font-medium">
-                      Upload Back Label
-                    </span>
-                    <span className="text-[11px] text-slate-500">
-                      Ingredients & nutrition panel
-                    </span>
-                  </button>
+                  <div className="space-y-2">
+                    <div className="text-center pt-1">
+                      <div className="text-xs font-semibold text-slate-800">
+                        Back Label Photo
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        Ingredients & nutrition panel
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <button
+                        type="button"
+                        disabled={isCompressing === 'back'}
+                        onClick={() => backCameraRef.current?.click()}
+                        className="min-h-[44px] px-2.5 py-2 text-xs font-medium text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-lg flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                      >
+                        <Camera className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+                        {isCompressing === 'back' ? 'Sizing...' : 'Camera'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isCompressing === 'back'}
+                        onClick={() => backInputRef.current?.click()}
+                        className="min-h-[44px] px-2.5 py-2 text-xs font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap shrink-0"
+                      >
+                        <Upload className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                        Library
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
             </div>

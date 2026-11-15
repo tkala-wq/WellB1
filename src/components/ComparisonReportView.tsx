@@ -310,7 +310,7 @@ export const ComparisonReportView: React.FC<ComparisonReportViewProps> = ({
           </div>
 
           {/* Interactive Filter Controls */}
-          <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg self-start">
+          <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg self-start max-w-full overflow-x-auto">
             {(
               [
                 { id: 'all', label: 'All Ingredients' },
@@ -323,7 +323,7 @@ export const ComparisonReportView: React.FC<ComparisonReportViewProps> = ({
                 key={tab.id}
                 type="button"
                 onClick={() => setIngredientFilter(tab.id)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                className={`min-h-[38px] px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 ${
                   ingredientFilter === tab.id
                     ? 'bg-white text-slate-900 shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
