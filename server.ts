@@ -748,6 +748,60 @@ ${ingredients.map((ing, i) => `${i + 1}. ${ing}`).join('\n')}`;
       server: { middlewareMode: true, hmr: false },
       appType: 'spa'
     });
+
+    // Serve a WebSocket-free /@vite/client stub in middleware mode so Vite CSS injection works
+    // without attempting HMR WebSocket connections that fail in Cloud Run preview iframes.
+    app.get('/@vite/client', (_req, res) => {
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(`const sheetsMap = new Map();
+export function updateStyle(id, content) {
+  let style = sheetsMap.get(id);
+  if (!style) {
+    style = document.createElement('style');
+    style.setAttribute('type', 'text/css');
+    style.setAttribute('data-vite-dev-id', id);
+    style.textContent = content;
+    document.head.appendChild(style);
+    sheetsMap.set(id, style);
+  } else {
+    style.textContent = content;
+  }
+}
+export function removeStyle(id) {
+  const style = sheetsMap.get(id);
+  if (style) {
+    document.head.removeChild(style);
+    sheetsMap.delete(id);
+  }
+}
+export function injectQuery(url, queryToInject) {
+  if (url[0] !== '.' && url[0] !== '/') {
+    return url;
+  }
+  const pathname = url.replace(/[?#].*$/, '');
+  const { search, hash } = new URL(url, 'http://example.com');
+  return \`\${pathname}?\${queryToInject}\${search ? \`&\` + search.slice(1) : ''}\${hash || ''}\`;
+}
+export function createHotContext() {
+  return {
+    get data() {
+      return {};
+    },
+    accept() {},
+    acceptExports() {},
+    dispose() {},
+    prune() {},
+    invalidate() {},
+    on() {},
+    off() {},
+    send() {}
+  };
+}
+export class ErrorOverlay {}
+`);
+    });
+
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(__dirname, 'dist');
