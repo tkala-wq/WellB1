@@ -1,5 +1,10 @@
 import React, { useRef, useState } from 'react';
 import {
+  BarcodeFormat,
+  BrowserMultiFormatReader,
+  DecodeHintType
+} from '@zxing/library';
+import {
   AlertTriangle,
   Camera,
   CheckCircle2,
@@ -51,22 +56,48 @@ export const ProductInputCard: React.FC<ProductInputCardProps> = ({
     });
   };
 
-  const detectNativeBarcodeDigits = async (file: File): Promise<string> => {
+  const detectNativeBarcodeDigits = async (
+    file: File,
+    dataUrlFallback?: string
+  ): Promise<string> => {
+    // 1. Try native hardware-accelerated BarcodeDetector API if available
     try {
       const win = window as unknown as {
         BarcodeDetector?: new (opts?: { formats: string[] }) => {
           detect: (source: ImageBitmap) => Promise<Array<{ rawValue?: string }>>;
         };
       };
-      if (!win.BarcodeDetector || typeof createImageBitmap !== 'function') {
-        return '';
+      if (win.BarcodeDetector && typeof createImageBitmap === 'function') {
+        const detector = new win.BarcodeDetector({
+          formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128']
+        });
+        const bitmap = await createImageBitmap(file);
+        const matches = await detector.detect(bitmap);
+        const nativeResult = matches[0]?.rawValue?.trim();
+        if (nativeResult) return nativeResult;
       }
-      const detector = new win.BarcodeDetector({
-        formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128']
-      });
-      const bitmap = await createImageBitmap(file);
-      const matches = await detector.detect(bitmap);
-      return matches[0]?.rawValue?.trim() || '';
+    } catch {
+      // Fall through to ZXing decoder
+    }
+
+    // 2. Universal browser fallback using @zxing/library (works on iOS Safari, Firefox, Chrome, etc.)
+    try {
+      const hints = new Map();
+      hints.set(DecodeHintType.TRY_HARDER, true);
+      hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+        BarcodeFormat.EAN_13,
+        BarcodeFormat.EAN_8,
+        BarcodeFormat.UPC_A,
+        BarcodeFormat.UPC_E,
+        BarcodeFormat.CODE_128
+      ]);
+      const reader = new BrowserMultiFormatReader(hints);
+      const srcUrl = dataUrlFallback || URL.createObjectURL(file);
+      const result = await reader.decodeFromImageUrl(srcUrl);
+      if (!dataUrlFallback) {
+        URL.revokeObjectURL(srcUrl);
+      }
+      return result?.getText()?.trim() || '';
     } catch {
       return '';
     }
@@ -220,10 +251,11 @@ export const ProductInputCard: React.FC<ProductInputCardProps> = ({
 
     setIsCompressing(side);
     try {
-      const [compressed, detectedDigits] = await Promise.all([
-        compressLabelImage(file, 1600, 0.84),
-        detectNativeBarcodeDigits(file)
-      ]);
+      const compressed = await compressLabelImage(file, 1600, 0.84);
+      const detectedDigits = await detectNativeBarcodeDigits(
+        file,
+        compressed.dataUrl
+      );
       const labelTitle = `${file.name} (${compressed.sizeKb} KB optimized)`;
 
       if (side === 'barcode') {
