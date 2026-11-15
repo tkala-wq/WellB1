@@ -13,7 +13,9 @@ import {
   ProductInput,
   ProductScorecard,
   RiskTier,
-  SubScoreDetail
+  SubScoreDetail,
+  TrafficLightColor,
+  TrafficLightLabel
 } from '../types/product';
 
 export interface AiIngredientAnnotation {
@@ -224,10 +226,16 @@ export function evaluateClaims(
   });
 }
 
-function tierFromScore(score: number): 'Low Risk' | 'Moderate Risk' | 'High Risk' {
-  if (score >= 75) return 'Low Risk';
-  if (score >= 50) return 'Moderate Risk';
-  return 'High Risk';
+function tierFromScore(score: number): TrafficLightLabel {
+  if (score >= 75) return 'Green — Good';
+  if (score >= 50) return 'Yellow — OK';
+  return 'Red — Bad';
+}
+
+function colorFromScore(score: number): 'Green' | 'Yellow' | 'Red' {
+  if (score >= 75) return 'Green';
+  if (score >= 50) return 'Yellow';
+  return 'Red';
 }
 
 export function calculateScorecard(
@@ -292,6 +300,7 @@ export function calculateScorecard(
     processingDetail = {
       score: 'N/A',
       weightPercent: 0,
+      colorRating: 'N/A',
       tier: 'Not Applicable',
       rationale:
         'Not Applicable (T0.1 Rule): Food processing classification (NOVA) does not apply to personal care formulations.'
@@ -299,6 +308,7 @@ export function calculateScorecard(
     nutritionDetail = {
       score: 'N/A',
       weightPercent: 0,
+      colorRating: 'N/A',
       tier: 'Not Applicable',
       rationale:
         'Not Applicable (T0.1 Rule): Macronutrient and micronutrient dietary balance applies only to ingested food and supplements.'
@@ -339,12 +349,14 @@ export function calculateScorecard(
     processingDetail = {
       score: processingScore,
       weightPercent: 15,
+      colorRating: colorFromScore(processingScore),
       tier: tierFromScore(processingScore),
       rationale: `${totalIngredients} declared ingredients with ${highRiskCount + modRiskCount} industrial additive/processing markers.`
     };
     nutritionDetail = {
       score: nutritionScore,
       weightPercent: 15,
+      colorRating: colorFromScore(nutritionScore),
       tier: tierFromScore(nutritionScore),
       rationale: `Evaluated per serving (${input.nutrition.servingSize || 'standard serving'}): ${addedSugars}g added sugar, ${sodium}mg sodium, ${protein}g protein, ${fiber}g fiber.`
     };
@@ -371,15 +383,17 @@ export function calculateScorecard(
 
   const unitPrice = hasValidPriceAndQty ? Number((priceNum / qtyNum).toFixed(2)) : 0;
 
+  const wellbeingColor = colorFromScore(wellbeingIndex);
   const wellbeingTier: ProductScorecard['wellbeingTier'] =
     wellbeingIndex >= 75
-      ? 'High Wellbeing (75–100)'
+      ? 'Green — Good (75–100)'
       : wellbeingIndex >= 50
-        ? 'Moderate Wellbeing (50–74)'
-        : 'Low Wellbeing (0–49)';
+        ? 'Yellow — OK (50–75)'
+        : 'Red — Bad (<50)';
 
   return {
     wellbeingIndex,
+    wellbeingColor,
     wellbeingTier,
     efficacyAndSafetyAnchor:
       highRiskCount === 0 && modRiskCount <= 1
@@ -389,6 +403,7 @@ export function calculateScorecard(
       ingredientSafety: {
         score: ingredientSafetyScore,
         weightPercent: isPersonalCare ? 45 : 30,
+        colorRating: colorFromScore(ingredientSafetyScore),
         tier: tierFromScore(ingredientSafetyScore),
         rationale: `${highRiskCount} High-Risk, ${modRiskCount} Moderate-Risk, and ${unratedCount} unrated ingredients across ${ingredientEvaluations.length} total ingredients.`
       },
@@ -396,6 +411,7 @@ export function calculateScorecard(
       additives: {
         score: additivesScore,
         weightPercent: isPersonalCare ? 35 : 25,
+        colorRating: colorFromScore(additivesScore),
         tier: tierFromScore(additivesScore),
         rationale: `${plasticCount} plastic/endocrine-linked ingredients and ${highRiskCount + modRiskCount} flagged additives or preservatives.`
       },
@@ -403,6 +419,7 @@ export function calculateScorecard(
       claimIntegrity: {
         score: claimScore,
         weightPercent: isPersonalCare ? 20 : 15,
+        colorRating: colorFromScore(claimScore),
         tier: tierFromScore(claimScore),
         rationale:
           claimEvaluations.length > 0
@@ -416,7 +433,7 @@ export function calculateScorecard(
     unitPrice,
     qualityRoi,
     qualityRoiFormulaText: hasValidPriceAndQty
-      ? `${wellbeingIndex} (Wellbeing) ÷ $${priceNum.toFixed(2)} ÷ ${qtyNum} ${input.quantityUnit} × 100 = ${qualityRoi}`
+      ? `${wellbeingTier.split(' (')[0]} ÷ $${priceNum.toFixed(2)} ÷ ${qtyNum} ${input.quantityUnit} × 100 = ${qualityRoi}`
       : 'Price or quantity omitted (optional) — Quality ROI skipped'
   };
 }
@@ -467,8 +484,8 @@ export function buildComparisonReport(
 
   const headlineSummary =
     betterChoice === 'Tie'
-      ? `${productA.input.name || 'Product A'} and ${productB.input.name || 'Product B'} achieve comparable overall Wellbeing Index scores (${productA.scorecard.wellbeingIndex} vs. ${productB.scorecard.wellbeingIndex}).`
-      : `${winner.input.brand ? `${winner.input.brand} ` : ''}${winner.input.name} is the higher-wellbeing choice (${winner.scorecard.wellbeingIndex}/100 vs. ${runnerUp.scorecard.wellbeingIndex}/100).`;
+      ? `${productA.input.name || 'Product A'} (${productA.scorecard.wellbeingTier.split(' (')[0]}) and ${productB.input.name || 'Product B'} (${productB.scorecard.wellbeingTier.split(' (')[0]}) achieve comparable overall ratings.`
+      : `${winner.input.brand ? `${winner.input.brand} ` : ''}${winner.input.name} is the recommended choice (${winner.scorecard.wellbeingTier.split(' (')[0]} vs. ${runnerUp.scorecard.wellbeingTier.split(' (')[0]}).`;
 
   const highRiskA = productA.ingredientEvaluations.filter((i) => i.riskTier === 'High');
   const highRiskB = productB.ingredientEvaluations.filter((i) => i.riskTier === 'High');
@@ -481,10 +498,10 @@ export function buildComparisonReport(
       ? bothHaveRoi
         ? `Both products perform similarly across safety and claim transparency. Compare their unit price ($${productA.scorecard.unitPrice}/${productA.input.quantityUnit} vs. $${productB.scorecard.unitPrice}/${productB.input.quantityUnit}) and check the specific sensitivity callouts below to pick the right fit for your household.`
         : `Both products perform similarly across safety and claim transparency. Check the specific sensitivity callouts below (or optionally add price and quantity for a Quality ROI tie-breaker) to pick the right fit for your household.`
-      : `${winner.input.name} scores higher because it avoids key high-concern additives found in ${runnerUp.input.name} (${runnerUp.ingredientEvaluations.filter((i) => i.riskTier !== 'Low' && i.riskTier !== 'No authoritative data found').map((i) => i.ingredientName).slice(0, 3).join(', ') || 'fewer flagged ingredients'}) while maintaining stronger alignment between its packaging claims and actual ingredient list.`;
+      : `${winner.input.name} earns a ${winner.scorecard.wellbeingTier} rating because it avoids key high-concern additives found in ${runnerUp.input.name} (${runnerUp.ingredientEvaluations.filter((i) => i.riskTier !== 'Low' && i.riskTier !== 'No authoritative data found').map((i) => i.ingredientName).slice(0, 3).join(', ') || 'fewer flagged ingredients'}) while maintaining stronger alignment between its packaging claims and actual ingredient list.`;
 
   const keyTradeOffs: string[] = [
-    `${productA.input.name || 'Product A'} carries ${highRiskA.length} High-Risk flag(s) and ${productA.ingredientEvaluations.filter((i) => i.riskTier === 'Moderate').length} Moderate-Risk flag(s), whereas ${productB.input.name || 'Product B'} carries ${highRiskB.length} High-Risk flag(s) and ${productB.ingredientEvaluations.filter((i) => i.riskTier === 'Moderate').length} Moderate-Risk flag(s).`
+    `${productA.input.name || 'Product A'} is rated ${productA.scorecard.wellbeingTier} (${highRiskA.length} High-Risk, ${productA.ingredientEvaluations.filter((i) => i.riskTier === 'Moderate').length} Moderate-Risk flags), whereas ${productB.input.name || 'Product B'} is rated ${productB.scorecard.wellbeingTier} (${highRiskB.length} High-Risk, ${productB.ingredientEvaluations.filter((i) => i.riskTier === 'Moderate').length} Moderate-Risk flags).`
   ];
 
   if (bothHaveRoi) {
@@ -507,13 +524,13 @@ export function buildComparisonReport(
 
   if (productA.input.unreadableFlags.length > 0 || productB.input.unreadableFlags.length > 0) {
     keyTradeOffs.push(
-      'Unreadable Label Notice: At least one product had partially illegible label sections flagged during intake; scores reflect only verified readable text without guessing.'
+      'Unreadable Label Notice: At least one product had partially illegible label sections flagged during intake; ratings reflect only verified readable text without guessing.'
     );
   }
 
   const roiComparisonSummary = bothHaveRoi
     ? `${productA.input.name || 'Product A'} achieves a Quality ROI of ${productA.scorecard.qualityRoi} versus ${productB.scorecard.qualityRoi} for ${productB.input.name || 'Product B'}.`
-    : 'Pricing omitted (optional) — verdict is based on the Wellbeing Index (0–100). Add price and quantity anytime to include Quality ROI.';
+    : 'Pricing omitted (optional) — verdict is based on the Red / Yellow / Green Wellbeing Rating. Add price and quantity anytime to include Quality ROI.';
 
   // Build precautions for Children, Pregnancy, Allergies
   const gatherPrecautions = (group: 'children' | 'pregnancy' | 'allergies'): string[] => {

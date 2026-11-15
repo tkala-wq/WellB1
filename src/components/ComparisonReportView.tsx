@@ -106,6 +106,43 @@ export const ComparisonReportView: React.FC<ComparisonReportViewProps> = ({
     );
   };
 
+  const renderTrafficLightHeading = (
+    color: 'Green' | 'Yellow' | 'Red' | 'N/A',
+    tierText: string,
+    size: 'sm' | 'lg' = 'sm'
+  ) => {
+    const textSize = size === 'lg' ? 'text-lg font-bold' : 'text-sm font-semibold';
+    if (color === 'Green') {
+      return (
+        <span className={`inline-flex items-center gap-1.5 ${textSize} text-emerald-700`}>
+          <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+          {tierText}
+        </span>
+      );
+    }
+    if (color === 'Yellow') {
+      return (
+        <span className={`inline-flex items-center gap-1.5 ${textSize} text-amber-700`}>
+          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+          {tierText}
+        </span>
+      );
+    }
+    if (color === 'Red') {
+      return (
+        <span className={`inline-flex items-center gap-1.5 ${textSize} text-red-700`}>
+          <ShieldAlert className="w-4 h-4 text-red-600 shrink-0" />
+          {tierText}
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1 text-sm font-medium text-slate-500">
+        Not Applicable (N/A)
+      </span>
+    );
+  };
+
   const renderSubScoreRow = (
     label: string,
     subA: SubScoreDetail,
@@ -121,19 +158,16 @@ export const ComparisonReportView: React.FC<ComparisonReportViewProps> = ({
           </div>
         </td>
         <td className="py-3 px-4 align-top">
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="text-base font-semibold font-mono tabular-nums text-slate-900">
-              {subA.score === 'N/A' ? 'N/A' : `${subA.score}/100`}
-            </span>
-            <span className="text-xs text-slate-500">{subA.tier}</span>
+          <div className="flex items-center justify-between gap-2">
+            {renderTrafficLightHeading(subA.colorRating, subA.tier, 'sm')}
           </div>
           {typeof subA.score === 'number' && (
             <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden mt-1.5">
               <div
                 className={`h-full ${
-                  subA.score >= 75
+                  subA.colorRating === 'Green'
                     ? 'bg-emerald-600'
-                    : subA.score >= 50
+                    : subA.colorRating === 'Yellow'
                       ? 'bg-amber-500'
                       : 'bg-red-600'
                 }`}
@@ -144,19 +178,16 @@ export const ComparisonReportView: React.FC<ComparisonReportViewProps> = ({
           <p className="text-xs text-slate-600 mt-1.5">{subA.rationale}</p>
         </td>
         <td className="py-3 px-4 align-top">
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="text-base font-semibold font-mono tabular-nums text-slate-900">
-              {subB.score === 'N/A' ? 'N/A' : `${subB.score}/100`}
-            </span>
-            <span className="text-xs text-slate-500">{subB.tier}</span>
+          <div className="flex items-center justify-between gap-2">
+            {renderTrafficLightHeading(subB.colorRating, subB.tier, 'sm')}
           </div>
           {typeof subB.score === 'number' && (
             <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden mt-1.5">
               <div
                 className={`h-full ${
-                  subB.score >= 75
+                  subB.colorRating === 'Green'
                     ? 'bg-emerald-600'
-                    : subB.score >= 50
+                    : subB.colorRating === 'Yellow'
                       ? 'bg-amber-500'
                       : 'bg-red-600'
                 }`}
@@ -195,12 +226,13 @@ export const ComparisonReportView: React.FC<ComparisonReportViewProps> = ({
             {prod.input.name || `Product ${prod.input.slot}`}
           </h4>
         </div>
-        <div className="text-right font-mono tabular-nums shrink-0">
-          <div className="text-xs text-slate-500">Wellbeing Index</div>
-          <div className="text-2xl font-bold text-slate-900">
-            {prod.scorecard.wellbeingIndex}
-            <span className="text-xs font-normal text-slate-500">/100</span>
-          </div>
+        <div className="text-right shrink-0">
+          <div className="text-xs text-slate-500 mb-0.5">Overall Rating</div>
+          {renderTrafficLightHeading(
+            prod.scorecard.wellbeingColor,
+            prod.scorecard.wellbeingTier.split(' (')[0],
+            'lg'
+          )}
         </div>
       </div>
 
@@ -472,16 +504,23 @@ export const ComparisonReportView: React.FC<ComparisonReportViewProps> = ({
         </div>
       </section>
 
-      {/* SECTION 4: WELLBEING INDEX & QUALITY ROI (T7.4) */}
+      {/* SECTION 4: WELLBEING RATING & QUALITY ROI (T7.4) */}
       <section className="space-y-4">
-        <div className="border-b border-slate-200 pb-2">
-          <h3 className="text-xl font-semibold text-slate-900">
-            04. Wellbeing Index (0–100) & Quality ROI
-          </h3>
-          <p className="text-sm text-slate-600">
-            Wellbeing Anchor (T4.3): A high-wellbeing product performs its
-            intended job effectively without harmful side effects.
-          </p>
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2 border-b border-slate-200 pb-2">
+          <div>
+            <h3 className="text-xl font-semibold text-slate-900">
+              04. Wellbeing Rating (Red / Yellow / Green) & Quality ROI
+            </h3>
+            <p className="text-sm text-slate-600">
+              Wellbeing Anchor (T4.3): A high-wellbeing product performs its
+              intended job effectively without harmful side effects.
+            </p>
+          </div>
+          <div className="text-xs font-medium text-slate-600">
+            Scale: <span className="text-red-700 font-semibold">Red (&lt;50) Bad</span> ·{' '}
+            <span className="text-amber-700 font-semibold">Yellow (50–75) OK</span> ·{' '}
+            <span className="text-emerald-700 font-semibold">Green (75–100) Good</span>
+          </div>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
@@ -490,7 +529,7 @@ export const ComparisonReportView: React.FC<ComparisonReportViewProps> = ({
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200">
                   <th className="py-3.5 px-4 text-xs font-semibold text-slate-700 w-1/4">
-                    Metric / Sub-Score Dimension
+                    Dimension
                   </th>
                   <th className="py-3.5 px-4 text-xs font-semibold text-slate-900 w-3/8">
                     Slot A: {productA.input.name || 'Product A'}
@@ -504,31 +543,33 @@ export const ComparisonReportView: React.FC<ComparisonReportViewProps> = ({
                 <tr className="bg-slate-50/50">
                   <td className="py-4 px-4 align-top">
                     <div className="text-sm font-bold text-slate-900">
-                      Overall Wellbeing Index (0–100)
+                      Overall Wellbeing Rating
                     </div>
                     <div className="text-xs text-slate-500 mt-0.5">
-                      Weighted synthesis across active dimensions
+                      Red (&lt;50 Bad) · Yellow (50–75 OK) · Green (75–100 Good)
                     </div>
                   </td>
                   <td className="py-4 px-4 align-top">
-                    <div className="text-2xl font-bold font-mono tabular-nums text-slate-900">
-                      {productA.scorecard.wellbeingIndex}/100
+                    <div>
+                      {renderTrafficLightHeading(
+                        productA.scorecard.wellbeingColor,
+                        productA.scorecard.wellbeingTier,
+                        'lg'
+                      )}
                     </div>
-                    <div className="text-xs font-medium text-slate-600 mt-0.5">
-                      {productA.scorecard.wellbeingTier}
-                    </div>
-                    <p className="text-xs text-slate-500 mt-1">
+                    <p className="text-xs text-slate-500 mt-1.5">
                       {productA.scorecard.efficacyAndSafetyAnchor}
                     </p>
                   </td>
                   <td className="py-4 px-4 align-top">
-                    <div className="text-2xl font-bold font-mono tabular-nums text-slate-900">
-                      {productB.scorecard.wellbeingIndex}/100
+                    <div>
+                      {renderTrafficLightHeading(
+                        productB.scorecard.wellbeingColor,
+                        productB.scorecard.wellbeingTier,
+                        'lg'
+                      )}
                     </div>
-                    <div className="text-xs font-medium text-slate-600 mt-0.5">
-                      {productB.scorecard.wellbeingTier}
-                    </div>
-                    <p className="text-xs text-slate-500 mt-1">
+                    <p className="text-xs text-slate-500 mt-1.5">
                       {productB.scorecard.efficacyAndSafetyAnchor}
                     </p>
                   </td>

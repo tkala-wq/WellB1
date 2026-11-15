@@ -321,7 +321,7 @@ export default function App() {
                   barcode, or type label details below. Every ingredient and
                   packaging claim is audited against FDA, USDA, EPA, CDC, NIH,
                   EFSA, WHO/IARC, Codex Alimentarius, and FSSAI registries to
-                  compute the <strong>Wellbeing Index (0–100)</strong> and{' '}
+                  determine a clear <strong>Red / Yellow / Green Wellbeing Rating</strong> and{' '}
                   <strong>Quality ROI</strong>.
                 </p>
               </div>
@@ -329,8 +329,13 @@ export default function App() {
               <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg space-y-1.5 shrink-0 lg:w-80">
                 <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5">
                   <Scale className="w-4 h-4 text-teal-700" />
-                  Scoring & Transparency Rules
+                  Rating Scale & Transparency Rules
                 </div>
+                <p className="text-xs text-slate-600">
+                  • <strong>Green (75–100):</strong> Good ·{' '}
+                  <strong>Yellow (50–75):</strong> OK ·{' '}
+                  <strong>Red (&lt;50):</strong> Bad.
+                </p>
                 <p className="text-xs text-slate-600">
                   • <strong>Personal Care Rule (T0.1):</strong> Processing Level
                   & Nutrition Balance are marked{' '}
@@ -339,12 +344,6 @@ export default function App() {
                 <p className="text-xs text-slate-600">
                   • <strong>No-Guessing Rule (T6.4):</strong> Blurry or cut-off
                   labels are flagged explicitly rather than guessed.
-                </p>
-                <p className="text-xs text-slate-600">
-                  • <strong>Quality ROI (T4.4):</strong>{' '}
-                  <span className="font-mono tabular-nums">
-                    Wellbeing ÷ Price ÷ Qty × 100
-                  </span>
                 </p>
               </div>
             </div>

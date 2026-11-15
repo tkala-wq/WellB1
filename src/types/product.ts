@@ -123,16 +123,26 @@ export interface ClaimEvaluation {
   citationUrl: string;
 }
 
+export type TrafficLightColor = 'Green' | 'Yellow' | 'Red' | 'N/A';
+
+export type TrafficLightLabel =
+  | 'Green — Good'
+  | 'Yellow — OK'
+  | 'Red — Bad'
+  | 'Not Applicable';
+
 export interface SubScoreDetail {
   score: number | 'N/A';
   weightPercent: number;
-  tier: 'Low Risk' | 'Moderate Risk' | 'High Risk' | 'Not Applicable';
+  colorRating: TrafficLightColor;
+  tier: TrafficLightLabel;
   rationale: string;
 }
 
 export interface ProductScorecard {
   wellbeingIndex: number;
-  wellbeingTier: 'High Wellbeing (75–100)' | 'Moderate Wellbeing (50–74)' | 'Low Wellbeing (0–49)';
+  wellbeingColor: 'Green' | 'Yellow' | 'Red';
+  wellbeingTier: 'Green — Good (75–100)' | 'Yellow — OK (50–75)' | 'Red — Bad (<50)';
   efficacyAndSafetyAnchor: string;
   subScores: {
     ingredientSafety: SubScoreDetail;
